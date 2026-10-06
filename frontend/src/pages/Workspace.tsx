@@ -164,6 +164,10 @@ export default function Workspace() {
                 SafeMed AI retrieves PubMed abstracts, removes documents that look relevant but point to the wrong answer,
                 and writes a cited answer. Each answer is then checked for hallucination, with and without the filter.
               </p>
+              <p className="mt-3 text-[12px] text-muted-foreground/80 leading-relaxed">
+                Demo corpus: 1,000 expert-labelled PubMedQA abstracts plus labelled synthetic test documents. The thesis
+                experiment runs separately on the 211,269-abstract pqa_artificial corpus.
+              </p>
               <div className="mt-8 grid sm:grid-cols-2 gap-2 text-left">
                 {cases.map((c) => (
                   <button

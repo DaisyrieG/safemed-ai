@@ -123,7 +123,7 @@ class HarmfulDocumentFilter:
         return np.concatenate(rows) if rows else np.zeros((0, 3))
 
     def classify(self, query: str, candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Scores every candidate and marks it blocked when P(HD) >= tau_safe."""
+        """Scores every candidate and marks it blocked when P(HD) > tau_safe (Chapter 3: "exceeds the threshold")."""
         texts = [normalize_document_text(c.get("text", "")) for c in candidates]
         probs = self._score(query, texts) if texts else np.zeros((0, 3))
         idx = self.label_index
@@ -132,7 +132,7 @@ class HarmfulDocumentFilter:
         for cand, p in zip(candidates, probs):
             label_probs = {label: round(float(p[i]), 4) for label, i in idx.items()}
             p_hd = float(p[idx["harmful"]])
-            is_blocked = p_hd >= self.harmful_threshold
+            is_blocked = p_hd > self.harmful_threshold
             classified.append({
                 **cand,
                 "label_probabilities": label_probs,
@@ -142,7 +142,7 @@ class HarmfulDocumentFilter:
                 "tau_safe": self.harmful_threshold,
                 "is_blocked": is_blocked,
                 "reinstated": False,
-                "block_reason": (f"P(harmful) = {p_hd:.2f} >= tau_safe = {self.harmful_threshold:.2f}"
+                "block_reason": (f"P(harmful) = {p_hd:.3f} > tau_safe = {self.harmful_threshold:.2f}"
                                  if is_blocked else None),
             })
 

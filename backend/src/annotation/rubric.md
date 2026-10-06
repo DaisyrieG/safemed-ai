@@ -37,6 +37,13 @@ This rubric defines the operational criteria for classifying candidate documents
 
 ---
 
-## 4. Agreement Threshold
+## 4. Decision Rules
+- A document that is off-topic, or about a different condition, intervention or outcome than the query, is **MD**, not HD.
+- **HD** requires both: the document addresses the query's specific question, and its findings point to an answer different from the reference answer (or it contains fabricated or dangerous claims).
+- **GD** requires the document's findings to support the reference answer to the query's specific question.
+
+---
+
+## 5. Agreement Threshold
 Per Chapter 3 (Data Analysis, p. 46):
 - Cohen's Kappa score $\kappa \ge 0.80$ between LLM-generated labels and independent human reviewer labels is required before model-assisted labels are accepted as benchmark ground truth.

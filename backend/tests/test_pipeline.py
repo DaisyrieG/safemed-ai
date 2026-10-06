@@ -48,11 +48,11 @@ def _const_filter(p_hd, tau=0.5):
                                  harmful_threshold=tau)
 
 
-def test_tau_safe_blocks_at_and_above_threshold():
-    blocked = _const_filter(0.5).classify("q", [{"id": "d1", "text": "x"}])[0]
+def test_tau_safe_blocks_only_above_threshold():
+    blocked = _const_filter(0.5001).classify("q", [{"id": "d1", "text": "x"}])[0]
     assert blocked["is_blocked"] is True and blocked["block_reason"]
-    passed = _const_filter(0.4999).classify("q", [{"id": "d1", "text": "x"}])[0]
-    assert passed["is_blocked"] is False and passed["block_reason"] is None
+    at_tau = _const_filter(0.5).classify("q", [{"id": "d1", "text": "x"}])[0]
+    assert at_tau["is_blocked"] is False and at_tau["block_reason"] is None
 
 
 def test_filter_blocks_harmful_and_keeps_top_30_in_retriever_order(retriever, fixture_corpus):
@@ -289,6 +289,31 @@ def test_train_filter_writes_model_with_harmful_label_and_tau(tmp_path):
     p = np.array([0.9, 0.8, 0.6, 0.2, 0.1])
     y = np.array([HARMFUL_ID, HARMFUL_ID, 0, 0, 1])
     assert choose_tau(p, y, max_gd_block=0.0)["tau_safe"] > 0.6
+
+
+def test_choose_tau_default_is_max_hd_f1_only():
+    import numpy as np
+    from src.stage2_filter.train_filter import choose_tau, HARMFUL_ID
+
+    p = np.array([0.9, 0.7, 0.65, 0.2])
+    y = np.array([HARMFUL_ID, HARMFUL_ID, 0, 1])
+    best = choose_tau(p, y)
+    assert best["hd_f1"] == 1.0 and 0.65 <= best["tau_safe"] < 0.7
+
+
+def test_train_seeds_reports_stability_and_selects_one(tmp_path):
+    pytest.importorskip("torch")
+    from src.stage2_filter.train_filter import train_seeds
+
+    base = _tiny_base_model(tmp_path / "base")
+    out = tmp_path / "multi"
+    summary = train_seeds(_write_pairs(tmp_path / "train.jsonl"), _write_pairs(tmp_path / "val.jsonl", 2), str(out),
+                          [1, 2, 3], test_data_path=_write_pairs(tmp_path / "test.jsonl", 2),
+                          base_model=base, epochs=1, batch_size=4)
+    assert summary["selected_seed"] in (1, 2, 3)
+    assert len(summary["stability"]["validation"]["fpr_at_tau"]["values"]) == 3
+    assert (out / "filter_config.json").exists() and (out / "seeds_summary.json").exists()
+    assert all((out / f"seed_{s}" / "filter_config.json").exists() for s in (1, 2, 3))
 
 
 def test_filter_reads_harmful_index_from_id2label(tmp_path):

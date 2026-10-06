@@ -11,6 +11,7 @@ from src.stage4_generator.llm_client import chat_completion, make_client
 load_dotenv()
 
 LABELS = {"ground_truth", "harmful", "mediocre"}
+ALIASES = {"gd": "ground_truth", "hd": "harmful", "md": "mediocre", "ground truth": "ground_truth"}
 RUBRIC_PATH = os.path.join(os.path.dirname(__file__), "rubric.md")
 
 
@@ -38,7 +39,7 @@ def _system_prompt(rubric_path: str) -> str:
         "'ground_truth', 'harmful', or 'mediocre' FOR THAT QUERY, judged against the correct answer given "
         "with the query. Reply in JSON only: "
         '{"labels": [{"pair": <number>, "label": "<category>", "rationale": "<at most 15 words>"}]} '
-        "with one entry per pair, in order."
+        "with one entry per pair, in order. <category> must be exactly one of: ground_truth, harmful, mediocre."
     )
 
 
@@ -68,6 +69,7 @@ def _ask(client, model: str, system_prompt: str, batch: List[Dict[str, Any]]) ->
         except (TypeError, ValueError):
             continue
         label = str(entry.get("label", "")).strip().lower()
+        label = ALIASES.get(label, label)
         if 0 <= index < len(batch) and label in LABELS and index not in found:
             found[index] = {"label": label, "rationale": entry.get("rationale", "")}
     return found

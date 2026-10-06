@@ -121,10 +121,50 @@ def pick_targets(choice: str, pqal: dict, extra: int, seed: int) -> list:
     return [p for p in pmids if p in pqal] + random.Random(seed).sample(pool, min(extra, len(pool)))
 
 
+def check_file(args) -> None:
+    """Style and answer checks on externally written documents; the checker model (--model) reads each one alone."""
+    client, error = make_client(os.getenv(args.api_key_env) or ("local" if args.base_url else None), args.base_url)
+    if client is None:
+        sys.exit(f"Checker unavailable: {error}. Pass --base-url for a local server or set {args.api_key_env}.")
+    with open(PQAL, "r", encoding="utf-8") as f:
+        pqal = json.load(f)
+    with open(args.check_only, "r", encoding="utf-8") as f:
+        drafts = json.load(f)
+    print(f"Checker: {args.model} @ {args.base_url or 'OpenAI API'} | {len(drafts)} documents")
+
+    kept, rejected = [], []
+    for d in drafts:
+        item = pqal[str(d["target_pmid"])]
+        answer = item["final_decision"]
+        text = " ".join(d["text"].split())
+        problems = style_problems(text, len(" ".join(item["CONTEXTS"]).split()))
+        if not problems:
+            verdict = answer_from(client, args.model, item["QUESTION"], text)
+            if verdict != OPPOSITE[answer]:
+                problems = [f"reads as '{verdict}', needs '{OPPOSITE[answer]}'"]
+        if problems:
+            rejected.append({"id": d["id"], "problems": problems})
+            print(f"  rejected {d['id']}: {'; '.join(problems)}")
+            continue
+        kept.append({
+            "id": d["id"], "pmid": None, "title": d["title"].strip(), "text": text,
+            "source": "Synthetic test document (written by an LLM for filter testing; not a real study)",
+            "true_label": "harmful", "synthetic": True, "target_pmid": str(d["target_pmid"]),
+            "target_question": item["QUESTION"], "contradicts_answer": answer, "supports_answer": OPPOSITE[answer],
+            "generated_by": d.get("generated_by", "external"), "checked_by": args.model, "generator_version": 2,
+        })
+    with open(args.output, "w", encoding="utf-8") as f:
+        json.dump(kept, f, ensure_ascii=False, indent=1)
+    print(f"Kept {len(kept)} of {len(drafts)} ({len(rejected)} rejected) -> {args.output}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--targets", choices=["test", "all"], default="test",
-                        help="test = the filter's 48 held-out test questions (default); all = every demo question")
+    parser.add_argument("--targets", choices=["test", "all", "pqaa"], default="test",
+                        help="test = the filter's 48 held-out test questions (default); all = every demo question; "
+                             "pqaa = the pqa_artificial train/val queries (training augmentation)")
+    parser.add_argument("--api-key-env", default="OPENAI_API_KEY",
+                        help="environment variable holding the writer's API key (e.g. SAFEMED_JUDGE_API_KEY for Groq)")
     parser.add_argument("--per-question", type=int, default=2, help="harmful documents per question (default 2)")
     parser.add_argument("--extra", type=int, default=0, help="additional random PubMedQA (PQA-L) questions")
     parser.add_argument("--model", default=os.getenv("SAFEMED_HD_MODEL") or "gpt-4o-mini",
@@ -135,74 +175,113 @@ def main() -> None:
     parser.add_argument("--retries", type=int, default=3, help="attempts per document before skipping it")
     parser.add_argument("--output", default=OUTPUT)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--pqaa-split", choices=["train", "val"], help="with --targets pqaa: only this split")
+    parser.add_argument("--workers", type=int, default=1, help="parallel requests (resumes from --output if it exists)")
+    parser.add_argument("--check-only", metavar="FILE",
+                        help="do not write; run the style and answer checks on documents written elsewhere "
+                             "(JSON list with target_pmid, title, text) and keep the ones that pass")
     args = parser.parse_args()
+    if args.check_only:
+        check_file(args)
+        return
 
     generator_model = os.getenv("SAFEMED_LLM_MODEL") or "gpt-4o-mini"
     if args.model == generator_model:
         print(f"Warning: the writer ({args.model}) is also the Stage 4 generator; report this or pass --model.")
 
-    client, error = make_client(os.getenv("OPENAI_API_KEY") or ("local" if args.base_url else None), args.base_url)
+    client, error = make_client(os.getenv(args.api_key_env) or ("local" if args.base_url else None), args.base_url)
     if client is None:
-        sys.exit(f"LLM unavailable: {error}. Set OPENAI_API_KEY in backend/.env, or pass --base-url for a local server.")
+        sys.exit(f"LLM unavailable: {error}. Set {args.api_key_env} in backend/.env, or pass --base-url for a local server.")
     print(f"Writer: {args.model} @ {args.base_url or 'OpenAI API'}")
 
-    with open(PQAL, "r", encoding="utf-8") as f:
-        pqal = json.load(f)
-    targets = pick_targets(args.targets, pqal, args.extra, args.seed)
-    if args.limit:
-        targets = targets[:args.limit]
+    if args.targets == "pqaa":
+        from src.stage1_retriever.build_corpus import SPLITS_PATH, load_pqaa
+        with open(SPLITS_PATH, "r", encoding="utf-8") as f:
+            splits = json.load(f)
+        targets = splits[args.pqaa_split] if args.pqaa_split else splits["train"] + splits["val"]
+        if args.limit:
+            targets = targets[:args.limit]
+        full, _ = load_pqaa()
+        pqal = {k: full[k] for k in targets}
+        del full
+    else:
+        with open(PQAL, "r", encoding="utf-8") as f:
+            pqal = json.load(f)
+        targets = pick_targets(args.targets, pqal, args.extra, args.seed)
+        if args.limit:
+            targets = targets[:args.limit]
     print(f"{len(targets)} questions x {args.per_question} documents -> {args.output}")
 
-    documents, skipped = [], 0
-    for pmid in targets:
+    def write_one(pmid: str, variant: int):
         item = pqal[pmid]
         answer = item["final_decision"]
         context = " ".join(item["CONTEXTS"])
         words = len(context.split())
-        for variant in range(1, args.per_question + 1):
-            prompt = PROMPT.format(question=item["QUESTION"], answer=answer, opposite=OPPOSITE[answer],
-                                   context=context, words=words, lo=round(0.85 * words), hi=round(1.15 * words),
-                                   variant=variant)
-            data, problems = None, ["no reply"]
-            for _ in range(args.retries):
-                try:
-                    reply = chat_completion(client, model=args.model, temperature=0.7, max_tokens=900,
-                                            messages=[{"role": "user", "content": prompt}])
-                    data = parse_reply(reply.choices[0].message.content)
-                    problems = style_problems(data["abstract"], words)
-                    if not problems:
-                        verdict = answer_from(client, args.model, item["QUESTION"], data["abstract"])
-                        if verdict != OPPOSITE[answer]:
-                            problems = [f"reads as '{verdict}', needs '{OPPOSITE[answer]}'"]
-                except Exception as exc:
-                    problems = [str(exc)[:200]]
-                    continue
+        prompt = PROMPT.format(question=item["QUESTION"], answer=answer, opposite=OPPOSITE[answer],
+                               context=context, words=words, lo=round(0.85 * words), hi=round(1.15 * words),
+                               variant=variant)
+        data, problems = None, ["no reply"]
+        for _ in range(args.retries):
+            try:
+                reply = chat_completion(client, model=args.model, temperature=0.7, max_tokens=900,
+                                        messages=[{"role": "user", "content": prompt}])
+                data = parse_reply(reply.choices[0].message.content)
+                problems = style_problems(data["abstract"], words)
                 if not problems:
-                    break
-            if problems:
-                skipped += 1
-                print(f"  skipped {pmid} variant {variant}: {'; '.join(problems)}")
+                    verdict = answer_from(client, args.model, item["QUESTION"], data["abstract"])
+                    if verdict != OPPOSITE[answer]:
+                        problems = [f"reads as '{verdict}', needs '{OPPOSITE[answer]}'"]
+            except Exception as exc:
+                problems = [str(exc)[:200]]
                 continue
-            documents.append({
-                "id": f"hd2_{pmid}_{variant}",
-                "pmid": None,
-                "title": data["title"].strip(),
-                "text": " ".join(data["abstract"].split()),
-                "source": "Synthetic test document (written by an LLM for filter testing; not a real study)",
-                "true_label": "harmful",
-                "synthetic": True,
-                "target_pmid": pmid,
-                "target_question": item["QUESTION"],
-                "contradicts_answer": answer,
-                "supports_answer": OPPOSITE[answer],
-                "generated_by": args.model,
-                "generator_version": 2,
-            })
-            print(f"  {pmid} variant {variant}: {data['title'][:80]}")
+            if not problems:
+                break
+        if problems:
+            return None, f"  skipped {pmid} variant {variant}: {'; '.join(problems)}"
+        return {
+            "id": f"hd2_{pmid}_{variant}",
+            "pmid": None,
+            "title": data["title"].strip(),
+            "text": " ".join(data["abstract"].split()),
+            "source": "Synthetic test document (written by an LLM for filter testing; not a real study)",
+            "true_label": "harmful",
+            "synthetic": True,
+            "target_pmid": pmid,
+            "target_question": item["QUESTION"],
+            "contradicts_answer": answer,
+            "supports_answer": OPPOSITE[answer],
+            "generated_by": args.model,
+            "generator_version": 2,
+        }, f"  {pmid} variant {variant}: {data['title'][:80]}"
 
-    os.makedirs(os.path.dirname(args.output), exist_ok=True)
-    with open(args.output, "w", encoding="utf-8") as f:
-        json.dump(documents, f, ensure_ascii=False, indent=1)
+    def save(docs):
+        os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
+        with open(args.output, "w", encoding="utf-8") as f:
+            json.dump(docs, f, ensure_ascii=False, indent=1)
+
+    documents = []
+    if os.path.exists(args.output):
+        with open(args.output, "r", encoding="utf-8") as f:
+            documents = json.load(f)
+    have = {d["id"] for d in documents}
+    jobs = [(p, v) for p in targets for v in range(1, args.per_question + 1) if f"hd2_{p}_{v}" not in have]
+    if have:
+        print(f"Resuming: {len(have)} documents already written, {len(jobs)} to go")
+    skipped = 0
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    with ThreadPoolExecutor(max_workers=args.workers) as pool:
+        futures = [pool.submit(write_one, p, v) for p, v in jobs]
+        for n, fut in enumerate(as_completed(futures), 1):
+            doc, line = fut.result()
+            print(line)
+            if doc:
+                documents.append(doc)
+            else:
+                skipped += 1
+            if n % 20 == 0:
+                save(documents)
+
+    save(documents)
     print(f"Wrote {len(documents)} documents ({skipped} skipped) to {args.output}")
     print("Measure the current filter on them: python scripts/stress_test_filter.py")
 
