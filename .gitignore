@@ -1,0 +1,48 @@
+# Byte-compiled / Python caches
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Pytest & caches
+.pytest_cache/
+.coverage
+
+# Node & frontend build artifacts
+frontend/node_modules/
+frontend/dist/
+
+# Local environment variables
+.env
+.env.local
+
+# IDE & OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Raw datasets (PubMedQA pqa_artificial is too large for GitHub; download locally)
+backend/data/raw/*
+!backend/data/raw/README.md
+
+# Pooled pqa_artificial corpus, its FAISS index and the query splits
+# (rebuild with: python -m src.stage1_retriever.build_corpus && python -m src.stage1_retriever.build_index)
+backend/data/processed/*
+!backend/data/processed/README.md
+
+# Large PubMedQA files and split outputs (over GitHub size limits)
+third_party/pubmedqa/data/ori_pqaa.json
+third_party/pubmedqa/data/ori_pqau.json
+third_party/pubmedqa/data/pqaa_*_set.json
+
+# Downloaded full-text PDFs and highlighted copies (publisher content, not redistributed)
+backend/data/cache/
+
+# Trained filter weights (train_filter.py output; never commit model weights)
+backend/models/
