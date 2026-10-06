@@ -83,6 +83,7 @@ class SingleQueryEvaluationBreakdown(BaseModel):
 class ClinicalQueryRequest(BaseModel):
     query: str = Field(..., min_length=3, description="Clinical or biomedical search query")
     case_id: Optional[str] = Field(None, description="Optional preset case ID")
+    check_hallucination: bool = Field(True, description="Run the Stage 5 judge on both answers")
 
 
 class ClinicalResponse(BaseModel):
@@ -98,6 +99,13 @@ class ClinicalResponse(BaseModel):
     )
     llm_model: Optional[str] = None
     llm_endpoint: Optional[str] = None
+    decision: Optional[str] = Field(None, description="yes / no / maybe from the answer's Decision line")
+    tau_safe: Optional[float] = None
+    control_answer: Optional[str] = Field(None, description="Answer generated without the Stage 2 filter")
+    hallucination_check: Optional[Dict[str, Any]] = Field(
+        None, description="Stage 5 judge results for both answers (claims, labels, H, UCR, HD attribution)"
+    )
+    hallucination_error: Optional[str] = None
 
 
 class SampleClinicalCase(BaseModel):
@@ -106,3 +114,15 @@ class SampleClinicalCase(BaseModel):
     query: str
     description: str
 
+
+
+class AnswerForCheck(BaseModel):
+    answer: str = ""
+    doc_ids: List[str] = Field(default_factory=list, description="IDs of the five documents given to the generator")
+
+
+class HallucinationCheckRequest(BaseModel):
+    query: str = Field(..., min_length=3)
+    case_id: Optional[str] = None
+    proposed: AnswerForCheck
+    control: AnswerForCheck

@@ -90,7 +90,7 @@ ${used ? `<h3>Answer sentences supported by this document</h3><ol style="list-st
   win.document.close()
 }
 
-export default function DocumentDetailModal({ doc, tau = 0.5, answerSentences = [], onClose }: Props) {
+export default function DocumentDetailModal({ doc, tau, answerSentences = [], onClose }: Props) {
   const [pdfState, setPdfState] = useState<{ loading: boolean; error?: string; pdf?: HighlightedPdf }>({ loading: false })
 
   const [articlePdf, setArticlePdf] = useState<{ checking: boolean; status?: FullTextStatus; error?: string }>({ checking: false })
@@ -184,10 +184,10 @@ export default function DocumentDetailModal({ doc, tau = 0.5, answerSentences = 
             {pHD !== undefined && pHD !== null && (
               <div className="rounded-lg border border-border p-2">
                 <div className="text-[10px] text-muted-foreground">P(HD)</div>
-                <div className={`font-bold ${pHD >= tau ? 'text-red-600 dark:text-red-400' : 'text-foreground'}`}>
+                <div className={`font-bold ${tau !== undefined && pHD >= tau ? 'text-red-600 dark:text-red-400' : 'text-foreground'}`}>
                   {pHD.toFixed(4)}
                 </div>
-                <div className="text-[10px] text-muted-foreground">τ = {tau.toFixed(2)}</div>
+                {tau !== undefined && <div className="text-[10px] text-muted-foreground">τ = {tau.toFixed(2)}</div>}
               </div>
             )}
             {doc.category && (

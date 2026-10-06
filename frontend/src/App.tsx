@@ -1,19 +1,16 @@
-import { BrowserRouter, Routes, Route } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import Layout from './components/Layout'
+import Workspace from './pages/Workspace'
 import QueryLab from './pages/QueryLab'
-import Results from './pages/Results'
-import DataSheet from './pages/DataSheet'
 
 export default function App() {
   return (
     <BrowserRouter>
       <Routes>
         <Route element={<Layout />}>
-          {/* Main Landing is SafeMed AI Verified Clinical Search Assistant */}
-          <Route index element={<QueryLab />} />
-          <Route path="lab" element={<QueryLab />} />
-          <Route path="results" element={<Results />} />
-          <Route path="sheet" element={<DataSheet />} />
+          <Route index element={<Workspace />} />
+          <Route path="classic" element={<div className="h-full overflow-y-auto"><QueryLab /></div>} />
+          <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>
     </BrowserRouter>

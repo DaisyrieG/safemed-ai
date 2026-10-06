@@ -13,12 +13,12 @@ load_dotenv()
 DEFAULT_MODEL = "gpt-4o-mini"
 
 SYSTEM_PROMPT = (
-    "You are SafeMed AI, a Verified Clinical Search Assistant. Synthesize a concise, "
+    "You are SafeMed AI, a clinical search assistant. Synthesize a concise, "
     "evidence-based Clinical Response Summary to the user's query.\n"
     "RULES:\n"
     "1. You MUST begin your response with exactly 'Decision: yes', 'Decision: no', or 'Decision: maybe'.\n"
     "2. Your explanation must not exceed 150 words.\n"
-    "3. Strictly ground your answer ONLY in the provided verified safe documents. Do NOT use internal memory.\n"
+    "3. Strictly ground your answer ONLY in the provided documents. Do NOT use internal memory.\n"
     "4. Explicitly state if the provided documents are insufficient to answer the query.\n"
     "5. Cite sources [1], [2], etc., where applicable."
 )
@@ -69,10 +69,10 @@ class AnswerGenerator:
             return "No supporting clinical literature found for this query in the verified database."
 
         context = "\n\n".join(
-            f"Source [{i + 1}] ({doc.get('title', 'Unknown')} - {doc.get('source', 'PubMed')}):\n{doc.get('text', '')}"
+            f"Source [{i + 1}] ({doc.get('title', 'Unknown')}):\n{doc.get('text', '')}"
             for i, doc in enumerate(top_documents[:5])
         )
-        user_content = f"Question: {query}\n\nRetrieved Verified Evidence:\n{context}\n\nClinical Response Summary:"
+        user_content = f"Question: {query}\n\nRetrieved Documents:\n{context}\n\nClinical Response Summary:"
         return self._complete(
             messages=[{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": user_content}],
             max_tokens=200,

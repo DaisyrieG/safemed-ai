@@ -1,131 +1,6 @@
 /**
- * SafeMed AI API Client.
- * Connects frontend directly to the SafeMed AI backend.
- * Uses Vite proxy (/api) or direct backend URL (http://127.0.0.1:8000).
- * No hardcoded responses or static fallbacks.
+ * SafeMed AI API client for the backend at http://127.0.0.1:8000.
  */
-
-// ---------------------------------------------------------------------------
-// Evaluation results served by GET /api/evaluation-results (backend/results/evaluation_results.json)
-// produced by experiments/evaluation/run_evaluation.py
-// ---------------------------------------------------------------------------
-
-export interface WilcoxonTestResult {
-  test_type: string
-  statistic: number
-  p_value: number
-  p_value_holm?: number
-  significant: boolean
-  mean_diff?: number
-  median_diff?: number
-  hodges_lehmann?: number
-  rank_biserial?: number
-  ci_95?: [number, number]
-  n_pairs?: number
-  n_samples?: number
-  diff_proportions?: number
-  discordant_pairs?: number
-  contingency_table?: [[number, number], [number, number]]
-  cohens_dz?: number
-  shapiro_wilk_p?: number
-}
-
-/** Result shape for McNemar's test or Exact Binomial fallback (legacy support). */
-export type BinaryTestResult = WilcoxonTestResult
-
-/** Result shape for Paired t-test or Permutation fallback (legacy support). */
-export type ContinuousTestResult = WilcoxonTestResult
-
-/** Fact-level verification metrics for one condition (control or treatment). */
-export interface FactLevelConditionMetrics {
-  precision: number   // Answer Accuracy = 1 − hr
-  recall: number
-  f1: number
-  hr: number          // Hallucination Rate
-  hdihr: number       // Harmful-Document-Induced Hallucination Rate
-}
-
-/** Filter performance metrics from experiments/evaluation/metrics.py */
-export interface FilterMetrics {
-  TPR_Recall: number
-  FPR: number
-  Precision: number
-  F1_score: number
-  AUROC: number
-  PR_AUC: number
-}
-
-/** Per-query document entry (control top-5 format). */
-export interface QueryDocumentControl {
-  id: string
-  pmid?: string
-  title: string
-  source: string
-  text?: string
-  true_label?: string
-  topic?: string
-  retrieval_score?: number
-  block_reason?: string
-}
-
-/** Per-query document entry (treatment top-5 format). */
-export interface QueryDocumentTreatment {
-  id: string
-  title: string
-  source: string
-  verification_status: string
-  relevance_score: number
-  snippet: string
-}
-
-/** Per-query condition result. */
-export interface QueryConditionResult {
-  her: number
-  gtrr: number
-  answer: string
-  top5: (QueryDocumentControl | QueryDocumentTreatment)[]
-  fact_metrics?: {
-    precision: number
-    recall: number
-    f1: number
-    hallucination_rate: number
-    hdihr: number
-  }
-}
-
-/** Shape of the legacy pilot results file (the Stage 5 benchmark now writes a different schema) */
-export interface EvaluationResults {
-  num_queries: number
-  Mean_Pre_Filter_Harmful_Density?: number
-  HD_Exposure_Top5_Control: number
-  HD_Exposure_Top5_Treatment: number
-  HER_Reduction?: number
-  GD_Retention_Top5_Control: number
-  GD_Retention_Top5_Treatment: number
-  Inferential_Statistics: {
-    H1_HER_Reduction?: WilcoxonTestResult
-    H2_GTRR_Retention?: WilcoxonTestResult
-    H3_Pre_vs_Final_HER?: WilcoxonTestResult
-    H4_Hallucination_Rate?: WilcoxonTestResult
-    Hit_at_5?: WilcoxonTestResult
-    Hallucination_Rate?: WilcoxonTestResult
-    HDIHR?: WilcoxonTestResult
-    HD_at_Top5?: WilcoxonTestResult
-    [key: string]: WilcoxonTestResult | undefined
-  }
-  Filter_Metrics: FilterMetrics
-  Fact_Level_Metrics: {
-    control: FactLevelConditionMetrics
-    treatment: FactLevelConditionMetrics
-  }
-  query_details: Array<{
-    query_id: string
-    query: string
-    reference_answer: string
-    control: QueryConditionResult
-    treatment: QueryConditionResult
-  }>
-}
 
 export interface DocumentEvaluationEntry {
   id?: string
@@ -240,6 +115,43 @@ export interface ClinicalResponse {
   attribution?: Attribution | null
   llm_model?: string | null
   llm_endpoint?: string | null
+  decision?: string | null
+  tau_safe?: number | null
+  control_answer?: string | null
+  hallucination_check?: HallucinationCheck | null
+  hallucination_error?: string | null
+}
+
+export type ClaimStatus = 'SUPPORTED' | 'UNSUPPORTED' | 'CONTRADICTED'
+
+export interface ClaimVerdict {
+  claim: string
+  status: ClaimStatus
+  reasoning: string
+  induced_by?: string | null
+}
+
+export interface AnswerCheck {
+  claims: ClaimVerdict[]
+  n_claims: number
+  n_supported: number
+  n_unsupported: number
+  n_contradicted: number
+  hallucinated: boolean
+  hd_induced: boolean
+  unsupported_claim_rate: number
+  decision: string
+  answer_correct: boolean | null
+}
+
+/** Stage 5 judge results for one query (Chapter 3 Hallucination Scoring Protocol). */
+export interface HallucinationCheck {
+  reference: 'pubmedqa' | 'sources'
+  reference_answer?: string | null
+  source_id?: string | null
+  judge_model: string
+  proposed: AnswerCheck
+  control: AnswerCheck
 }
 
 export interface SampleCase {
@@ -261,18 +173,12 @@ export interface SystemHealth {
   }
   stage_3_reranker: string
   stage_4_generator: string
+  stage_4_ready?: boolean
+  stage_5_judge?: string
+  stage_5_ready?: boolean
 }
 
 const API_BASE = window.location.port === '8000' ? '' : 'http://127.0.0.1:8000'
-
-export async function fetchEvaluationResults(): Promise<EvaluationResults> {
-  const res = await fetch(`${API_BASE}/api/evaluation-results`)
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}))
-    throw new Error(err.detail || `Failed to load evaluation results (HTTP ${res.status})`)
-  }
-  return res.json()
-}
 
 export async function fetchHealth(): Promise<SystemHealth> {
   const res = await fetch(`${API_BASE}/api/health`)
@@ -286,11 +192,11 @@ export async function fetchSampleCases(): Promise<SampleCase[]> {
   return res.json()
 }
 
-export async function executeClinicalQuery(query: string, case_id?: string): Promise<ClinicalResponse> {
+export async function executeClinicalQuery(query: string, case_id?: string, check_hallucination = true): Promise<ClinicalResponse> {
   const res = await fetch(`${API_BASE}/api/query`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ query: query.trim(), case_id }),
+    body: JSON.stringify({ query: query.trim(), case_id, check_hallucination }),
   })
 
   if (!res.ok) {
@@ -349,4 +255,26 @@ export async function fetchFullTextStatus(pmid: string): Promise<FullTextStatus>
     throw new Error(typeof data.detail === 'string' ? data.detail : `Server responded with status ${res.status}`)
   }
   return await res.json()
+}
+
+/** Runs the Stage 5 judge on both answers of a query already answered by executeClinicalQuery. */
+export async function runHallucinationCheck(response: ClinicalResponse, case_id?: string): Promise<HallucinationCheck> {
+  const res = await fetch(`${API_BASE}/api/hallucination-check`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      query: response.query,
+      case_id,
+      proposed: { answer: response.clinical_summary, doc_ids: response.trusted_sources.map((s) => String(s.id ?? '')) },
+      control: {
+        answer: response.control_answer ?? '',
+        doc_ids: (response.evaluation_breakdown?.control.top5_documents ?? []).map((d) => String(d.id ?? '')),
+      },
+    }),
+  })
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}))
+    throw new Error(typeof data.detail === 'string' ? data.detail : `Server responded with status ${res.status}`)
+  }
+  return res.json()
 }

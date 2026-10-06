@@ -48,15 +48,21 @@ def _normalise(text: str) -> str:
     return " ".join(str(text or "").lower().split()).rstrip("?. ")
 
 
-def mark_source_abstract(query: str, candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Sets each candidate's gold label for this query: its source abstract is GD, a synthetic HD only counts for its own question."""
+def mark_source_abstract(query: str, candidates: List[Dict[str, Any]],
+                         target_pmid: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Sets each candidate's gold label for this query: its source abstract is GD, a synthetic HD only counts for its own question.
+
+    The query's PubMedQA question is identified by target_pmid when given (e.g. a paraphrased sample case), else by exact text."""
     q = _normalise(query)
+    target = str(target_pmid) if target_pmid else None
     marked = []
     for doc in candidates:
         if doc.get("true_label") == "harmful" and doc.get("target_question"):
-            if _normalise(doc["target_question"]) != q:
+            own = (str(doc.get("target_pmid")) == target) if target else _normalise(doc["target_question"]) == q
+            if not own:
                 doc = {**doc, "true_label": "mediocre"}
-        elif q and _normalise(doc.get("title")) == q and doc.get("true_label") != "harmful":
+        elif doc.get("true_label") != "harmful" and (
+                (target and str(doc.get("pmid")) == target) or (q and _normalise(doc.get("title")) == q)):
             doc = {**doc, "true_label": "ground_truth", "is_source_abstract": True}
         marked.append(doc)
     return marked
@@ -100,7 +106,9 @@ class SafeMedPipeline:
         self.reranker = reranker or Reranker(top_k=TOP_K)
         self.generator = generator or AnswerGenerator()
 
+        self.decompose_claims = False
         self.last_filter_result: Optional[FilterResult] = None
+        self.last_candidates: List[Dict[str, Any]] = []
         self.last_control_top5: List[Dict[str, Any]] = []
 
     def run(
@@ -108,12 +116,14 @@ class SafeMedPipeline:
         query: str,
         exclude_id: Optional[str] = None,
         generate_control_answer: bool = True,
+        target_pmid: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Runs one query through Stages 1 to 4 for both conditions."""
         query_text = query.strip()
 
         candidates = self.retriever.retrieve(query_text, top_k=50, exclude_id=exclude_id)
-        candidates = mark_source_abstract(query_text, candidates)
+        candidates = mark_source_abstract(query_text, candidates, target_pmid)
+        self.last_candidates = candidates
 
         if self.filter is not None:
             fr = self.filter.filter(query_text, candidates)
@@ -128,11 +138,11 @@ class SafeMedPipeline:
         self.last_control_top5 = control_top5
 
         answer = self.generator.generate_answer(query_text, top5)
-        claims = self.generator.decompose_into_claims(answer)
+        claims = self.generator.decompose_into_claims(answer) if self.decompose_claims else []
         attribution = attribute_answer(answer, top5, encoder=self.retriever.model)
         if generate_control_answer:
             control_answer = self.generator.generate_answer(query_text, control_top5)
-            control_claims = self.generator.decompose_into_claims(control_answer)
+            control_claims = self.generator.decompose_into_claims(control_answer) if self.decompose_claims else []
         else:
             control_answer, control_claims = "", []
 

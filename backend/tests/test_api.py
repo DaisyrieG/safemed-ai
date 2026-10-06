@@ -1,14 +1,36 @@
 """Tests for the SafeMed AI REST API, over the test pipeline (fixture corpus, oracle filter, fake LLM)."""
 
+import json
+import types
+
 import pytest
 from fastapi.testclient import TestClient
 
 import src.api.app as api
+from src.stage5_evaluation.judge import ClaimJudge
+
+
+def fake_judge_client():
+    """Claims: two lines; verdicts: claim 1 SUPPORTED, claim 2 CONTRADICTED; attribution: none."""
+    def create(**kw):
+        prompt = kw["messages"][0]["content"]
+        if "atomic factual claims" in prompt:
+            content = "Aspirin reduced colorectal cancer risk.\nThe effect was seen in all age groups."
+        elif '"verdicts"' in prompt:
+            content = json.dumps({"verdicts": [
+                {"index": 1, "status": "SUPPORTED", "reasoning": "stated"},
+                {"index": 2, "status": "CONTRADICTED", "reasoning": "only adults"}]})
+        else:
+            content = json.dumps({"attributions": [{"index": 1, "supported_by_document": 0}]})
+        msg = types.SimpleNamespace(content=content)
+        return types.SimpleNamespace(choices=[types.SimpleNamespace(message=msg)])
+    return types.SimpleNamespace(chat=types.SimpleNamespace(completions=types.SimpleNamespace(create=create)))
 
 
 @pytest.fixture
 def client(make_pipeline, monkeypatch):
     monkeypatch.setattr(api, "_pipeline", make_pipeline())
+    monkeypatch.setattr(api, "_judge", ClaimJudge(client=fake_judge_client(), model="fake-judge"))
     return TestClient(api.app)
 
 
@@ -27,8 +49,27 @@ def test_health_endpoint(client):
 
 def test_sample_cases_endpoint(client):
     cases = client.get("/api/sample-cases").json()
-    assert len(cases) == 3
-    assert all(c["query"].endswith("?") for c in cases)
+    assert len(cases) == 6
+    assert all(c["query"].endswith("?") and c["case_id"].startswith("pqa-") for c in cases)
+
+
+def test_query_reports_hallucination_check(client):
+    data = client.post("/api/query", json={"query": "Does daily aspirin reduce colorectal cancer risk?"}).json()
+    check = data["hallucination_check"]
+    assert data["hallucination_error"] is None
+    assert data["decision"] == "yes"
+    assert check["judge_model"] == "fake-judge"
+    for condition in ("proposed", "control"):
+        r = check[condition]
+        assert r["n_claims"] == 2 and r["n_contradicted"] == 1
+        assert r["hallucinated"] is True
+        assert r["unsupported_claim_rate"] == 0.0
+
+
+def test_query_can_skip_hallucination_check(client):
+    data = client.post("/api/query", json={"query": "Does daily aspirin reduce colorectal cancer risk?",
+                                            "check_hallucination": False}).json()
+    assert data["hallucination_check"] is None
 
 
 def test_clinical_query_execution(client):
@@ -45,4 +86,19 @@ def test_clinical_query_execution(client):
     assert len(data["trusted_sources"]) == 5
     assert all(s["verification_status"] == "verified safe" for s in data["trusted_sources"])
     assert data["clinical_summary"].startswith("Decision:")
-    assert len(data["atomic_claims"]) > 0
+    assert data["atomic_claims"] == []
+
+
+def test_hallucination_check_endpoint(client):
+    first = client.post("/api/query", json={"query": "Does daily aspirin reduce colorectal cancer risk?",
+                                             "check_hallucination": False}).json()
+    payload = {
+        "query": first["query"],
+        "proposed": {"answer": first["clinical_summary"], "doc_ids": [s["id"] for s in first["trusted_sources"]]},
+        "control": {"answer": first["control_answer"] or "",
+                    "doc_ids": [d["id"] for d in first["evaluation_breakdown"]["control"]["top5_documents"]]},
+    }
+    check = client.post("/api/hallucination-check", json=payload).json()
+    assert check["reference"] == "sources"
+    assert check["proposed"]["hallucinated"] is True
+    assert check["control"]["n_claims"] == 2

@@ -10,6 +10,7 @@ _BACKEND = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 _EVAL_RESULTS_PATH = os.path.join(_BACKEND, "results", "evaluation_results.json")
 
 import hashlib
+import re
 import threading
 from typing import List, Dict, Any, Optional
 from fastapi import FastAPI, HTTPException
@@ -25,9 +26,12 @@ from src.api.schemas import (
     DocumentEvaluationEntry,
     TrustedDocument,
     SingleQueryEvaluationBreakdown,
+    HallucinationCheckRequest,
 )
-from src.pipeline import SafeMedPipeline
+from src.pipeline import SafeMedPipeline, mark_source_abstract, _normalise
 from src.stage4_generator.generator import GeneratorUnavailableError
+from src.stage5_evaluation.judge import ClaimJudge
+from src.stage5_evaluation.live_check import check_query, extract_decision
 
 app = FastAPI(
     title="SafeMed AI - Verified Clinical Search Assistant",
@@ -59,24 +63,54 @@ def get_pipeline() -> SafeMedPipeline:
     return _pipeline
 
 
+_judge: ClaimJudge | None = None
+
+
+def get_judge() -> ClaimJudge:
+    global _judge
+    if _judge is None:
+        with _pipeline_lock:
+            if _judge is None:
+                _judge = ClaimJudge()
+    return _judge
+
+
 PUBMEDQA_SAMPLE_CASES: List[Dict[str, str]] = [
     {
         "case_id": "pqa-24318956",
-        "title": "Case 1: Digoxin & Prostate Cancer Risk",
-        "query": "Is digoxin use for cardiovascular disease associated with risk of prostate cancer?",
-        "description": "PubMedQA test question, PMID 24318956. Expert answer: yes.",
-    },
-    {
-        "case_id": "pqa-24666444",
-        "title": "Case 2: The \"July Effect\" in Cancer Surgery",
-        "query": "Is there any evidence of a \"July effect\" in patients undergoing major cancer surgery?",
-        "description": "PubMedQA test question, PMID 24666444. Expert answer: no.",
+        "title": "Digoxin and prostate cancer",
+        "query": "Does taking digoxin for heart conditions change a man's chance of developing prostate cancer?",
+        "description": "Paraphrase of PubMedQA PMID 24318956. Expert answer: yes.",
     },
     {
         "case_id": "pqa-25371231",
-        "title": "Case 3: Vitamin D & Osteochondritis Dissecans",
-        "query": "Is vitamin D insufficiency or deficiency related to the development of osteochondritis dissecans?",
-        "description": "PubMedQA test question, PMID 25371231. Expert answer: maybe.",
+        "title": "Vitamin D and osteochondritis dissecans",
+        "query": "Could low vitamin D levels contribute to osteochondritis dissecans in young patients?",
+        "description": "Paraphrase of PubMedQA PMID 25371231. Expert answer: maybe.",
+    },
+    {
+        "case_id": "pqa-17276801",
+        "title": "Troponin in pulmonary embolism",
+        "query": "In acute pulmonary embolism, is a high troponin a warning sign for complications and death in hospital?",
+        "description": "Paraphrase of PubMedQA PMID 17276801. Expert answer: yes.",
+    },
+    {
+        "case_id": "pqa-26370095",
+        "title": "Paying pregnant smokers to quit",
+        "query": "Is paying pregnant women to stop smoking worth the money?",
+        "description": "Paraphrase of PubMedQA PMID 26370095. Expert answer: yes.",
+    },
+    {
+        "case_id": "pqa-19230985",
+        "title": "Bleeding after tonsillectomy",
+        "query": "After having tonsils removed, does late bleeding usually happen at night?",
+        "description": "Paraphrase of PubMedQA PMID 19230985. Expert answer: yes.",
+    },
+    {
+        "case_id": "pqa-22188074",
+        "title": "Everyday tasks and dementia",
+        "query": "Can difficulty with everyday tasks like managing money or medications predict who will develop dementia?",
+        "description": "Paraphrase of PubMedQA PMID 22188074. Expert answer: yes.",
     },
 ]
 
@@ -149,6 +183,8 @@ def health_check():
             "stage_4_generator": pipeline.generator.model,
             "stage_4_endpoint": pipeline.generator.base_url or "OpenAI API",
             "stage_4_ready": pipeline.generator.client is not None,
+            "stage_5_judge": get_judge().model,
+            "stage_5_ready": get_judge().client is not None,
         }
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"Pipeline failed to initialise: {exc}") from exc
@@ -186,10 +222,28 @@ def search_clinical_query(req: ClinicalQueryRequest):
             detail=f"Pipeline is unavailable: {exc}"
         ) from exc
 
+    target_pmid = _case_pmid(req.case_id)
     try:
-        result = pipeline.run(query_text)
+        result = pipeline.run(query_text, target_pmid=target_pmid)
     except GeneratorUnavailableError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    control_answer = (result.get("evaluation_breakdown") or {}).get("control", {}).get("answer") or ""
+    hallucination_check, hallucination_error = None, None
+    if req.check_hallucination:
+        judge = get_judge()
+        if judge.client is None:
+            hallucination_error = f"Judge '{judge.model}' unavailable ({judge.init_error}). Set SAFEMED_JUDGE_* in backend/.env."
+        else:
+            try:
+                hallucination_check = check_query(
+                    judge,
+                    _source_document(pipeline, query_text, target_pmid),
+                    {"answer": result["answer"], "context": result["top5_documents"]},
+                    {"answer": control_answer, "context": pipeline.last_control_top5},
+                )
+            except Exception as exc:
+                hallucination_error = f"Judge call failed: {exc}"
 
     scan_entries = [
         DocumentEvaluationEntry(
@@ -253,7 +307,53 @@ def search_clinical_query(req: ClinicalQueryRequest):
         attribution=result.get("attribution"),
         llm_model=pipeline.generator.model,
         llm_endpoint=pipeline.generator.base_url or "OpenAI API",
+        decision=extract_decision(result["answer"]) or None,
+        tau_safe=pipeline.filter.harmful_threshold if pipeline.filter is not None else None,
+        control_answer=control_answer or None,
+        hallucination_check=hallucination_check,
+        hallucination_error=hallucination_error,
     )
+
+
+def _case_pmid(case_id: Optional[str]) -> Optional[str]:
+    """PMID of a preset case ('pqa-<pmid>'), else None."""
+    m = re.match(r"^pqa-(\d{5,9})", case_id or "")
+    return m.group(1) if m else None
+
+
+def _source_document(pipeline: SafeMedPipeline, query: str, target_pmid: Optional[str]) -> Optional[Dict[str, Any]]:
+    """The query's own PubMedQA abstract (reference evidence), when the query maps to a PubMedQA question."""
+    q = _normalise(query)
+    for doc in pipeline.retriever.corpus:
+        if doc.get("true_label") == "harmful" or doc.get("synthetic"):
+            continue
+        if (target_pmid and str(doc.get("pmid")) == target_pmid) or (not target_pmid and _normalise(doc.get("title")) == q):
+            return doc
+    return None
+
+
+@app.post("/api/hallucination-check", summary="Stage 5 Hallucination Check For Both Answers")
+def hallucination_check(req: HallucinationCheckRequest):
+    """Runs the judge on the filtered and unfiltered answers of a query already answered by /api/query."""
+    pipeline = get_pipeline()
+    judge = get_judge()
+    if judge.client is None:
+        raise HTTPException(status_code=503, detail=f"Judge '{judge.model}' unavailable ({judge.init_error}).")
+    target_pmid = _case_pmid(req.case_id)
+    by_id = {str(d.get("id")): d for d in pipeline.retriever.corpus}
+
+    def context(ids: List[str]) -> List[Dict[str, Any]]:
+        return mark_source_abstract(req.query, [by_id[i] for i in ids if i in by_id], target_pmid)
+
+    try:
+        return check_query(
+            judge,
+            _source_document(pipeline, req.query, target_pmid),
+            {"answer": req.proposed.answer, "context": context(req.proposed.doc_ids)},
+            {"answer": req.control.answer, "context": context(req.control.doc_ids)},
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Judge call failed: {exc}") from exc
 
 
 class HighlightRequest(BaseModel):

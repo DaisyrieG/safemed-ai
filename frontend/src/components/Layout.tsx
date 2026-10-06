@@ -1,13 +1,7 @@
-import { NavLink, Outlet } from 'react-router-dom'
-import { useState } from 'react'
-
-const APP_NAME = 'SafeMed AI'
-
-const NAV_LINKS = [
-  { to: '/', label: 'Clinical Search', exact: true },
-  { to: '/results', label: 'Benchmark Evaluation (H1–H4)' },
-  { to: '/sheet', label: 'Literature Corpus' },
-]
+import { Outlet } from 'react-router-dom'
+import { useEffect, useState } from 'react'
+import { fetchHealth, type SystemHealth } from '../lib/api'
+import { IconMoon, IconShield, IconSun } from './icons'
 
 function ThemeToggle() {
   const [dark, setDark] = useState(() => document.documentElement.classList.contains('dark'))
@@ -20,96 +14,85 @@ function ThemeToggle() {
   return (
     <button
       onClick={toggle}
-      className="text-xs font-mono px-2.5 py-1 rounded-lg border border-border hover:bg-muted transition-colors cursor-pointer"
+      className="w-8 h-8 inline-flex items-center justify-center rounded-full text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer"
       aria-label="Toggle light/dark theme"
     >
-      {dark ? '☀ Light' : '◐ Dark'}
+      {dark ? <IconSun /> : <IconMoon />}
     </button>
   )
 }
 
-export default function Layout() {
-  const [mobileOpen, setMobileOpen] = useState(false)
+function StatusPill() {
+  const [health, setHealth] = useState<SystemHealth | null>(null)
+  const [offline, setOffline] = useState(false)
 
+  useEffect(() => {
+    let alive = true
+    const check = () =>
+      fetchHealth()
+        .then((h) => alive && (setHealth(h), setOffline(false)))
+        .catch(() => alive && (setHealth(null), setOffline(true)))
+    check()
+    const id = setInterval(check, 10000)
+    return () => {
+      alive = false
+      clearInterval(id)
+    }
+  }, [])
+
+  if (offline) {
+    return (
+      <span className="inline-flex items-center gap-2 text-xs text-amber-700 dark:text-amber-300" title="cd backend && python src/api/app.py">
+        <span className="w-1.5 h-1.5 rounded-full bg-amber-500" /> Backend offline
+      </span>
+    )
+  }
+  if (!health) {
+    return (
+      <span className="inline-flex items-center gap-2 text-xs text-muted-foreground">
+        <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/50 animate-pulse" /> Connecting…
+      </span>
+    )
+  }
   return (
-    <div className="min-h-screen flex flex-col bg-background text-foreground font-sans">
-      {/* Header */}
-      <header className="sticky top-0 z-40 border-b border-border bg-background/95 backdrop-blur-md">
-        <div className="max-w-7xl mx-auto px-4 h-14 flex items-center justify-between gap-4">
-          {/* Brand */}
-          <NavLink to="/" className="flex items-center gap-2.5 shrink-0 group">
-            <div className="w-7 h-7 rounded-lg bg-emerald-600 flex items-center justify-center text-white font-bold text-sm shadow-sm group-hover:bg-emerald-700 transition-colors">
-              ✚
-            </div>
-            <div>
-              <span className="font-bold text-base tracking-tight text-foreground">{APP_NAME}</span>
-              <span className="hidden sm:inline-block ml-2 text-[10px] font-mono text-muted-foreground uppercase tracking-wider font-semibold">
-                Clinical Search
-              </span>
-            </div>
-          </NavLink>
+    <span
+      className="hidden sm:inline-flex items-center gap-2 text-xs text-muted-foreground"
+      title={`Generator: ${health.stage_4_generator} · Judge: ${health.stage_5_judge ?? 'n/a'}`}
+    >
+      <span className={`w-1.5 h-1.5 rounded-full ${health.stage_4_ready ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+      {health.stage_4_generator}
+      {health.stage_5_judge && (
+        <>
+          <span className="text-border">|</span>
+          <span className={`w-1.5 h-1.5 rounded-full ${health.stage_5_ready ? 'bg-emerald-500' : 'bg-amber-500'}`} />
+          judge {health.stage_5_judge}
+        </>
+      )}
+    </span>
+  )
+}
 
-          {/* Desktop Navigation */}
-          <nav className="hidden md:flex items-center gap-1" aria-label="Main navigation">
-            {NAV_LINKS.map(({ to, label, exact }) => (
-              <NavLink
-                key={to}
-                to={to}
-                end={exact}
-                className={({ isActive }) =>
-                  `text-xs font-mono px-3 py-1.5 rounded-lg transition-colors ${
-                    isActive
-                      ? 'bg-muted text-foreground font-semibold shadow-xs'
-                      : 'text-muted-foreground hover:text-foreground hover:bg-muted/50'
-                  }`
-                }
-              >
-                {label}
-              </NavLink>
-            ))}
-          </nav>
-
-          {/* Right Controls */}
+export default function Layout() {
+  return (
+    <div className="h-screen flex flex-col bg-background text-foreground font-sans">
+      <header className="shrink-0 h-14 border-b border-border bg-card">
+        <div className="h-full px-4 sm:px-6 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-primary text-primary-foreground flex items-center justify-center">
+              <IconShield size={18} />
+            </div>
+            <div className="leading-tight">
+              <div className="font-semibold text-[15px] tracking-tight">SafeMed AI</div>
+              <div className="text-[11px] text-muted-foreground hidden sm:block">Biomedical RAG with a pre-reranking safety filter</div>
+            </div>
+          </div>
           <div className="flex items-center gap-3">
-            <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 text-[11px] font-mono font-medium">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-              Safety Filter Active
-            </div>
+            <StatusPill />
             <ThemeToggle />
-            <button
-              className="md:hidden text-xs font-mono px-2 py-1 border border-border rounded"
-              onClick={() => setMobileOpen((v) => !v)}
-              aria-label="Toggle mobile menu"
-            >
-              ☰
-            </button>
           </div>
         </div>
-
-        {/* Mobile Navigation */}
-        {mobileOpen && (
-          <nav className="md:hidden border-t border-border bg-background px-4 py-3 flex flex-col gap-1" aria-label="Mobile navigation">
-            {NAV_LINKS.map(({ to, label, exact }) => (
-              <NavLink
-                key={to}
-                to={to}
-                end={exact}
-                onClick={() => setMobileOpen(false)}
-                className={({ isActive }) =>
-                  `text-xs font-mono px-3 py-2 rounded-lg ${
-                    isActive ? 'bg-muted font-semibold text-foreground' : 'text-muted-foreground'
-                  }`
-                }
-              >
-                {label}
-              </NavLink>
-            ))}
-          </nav>
-        )}
       </header>
-
-      {/* Main Content */}
-      <main className="flex-1" id="main-content">
+      <main className="flex-1 min-h-0">
         <Outlet />
       </main>
     </div>
