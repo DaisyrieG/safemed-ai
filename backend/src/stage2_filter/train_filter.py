@@ -95,7 +95,7 @@ def evaluate(probs: np.ndarray, labels: np.ndarray, tau: Optional[float] = None)
     return out
 
 
-def predict(model, tokenizer, pairs, batch_size: int, device) -> np.ndarray:
+def predict(model, tokenizer, pairs, batch_size: int, device, max_length: int = MAX_LENGTH) -> np.ndarray:
     import torch
 
     model.eval()
@@ -104,7 +104,7 @@ def predict(model, tokenizer, pairs, batch_size: int, device) -> np.ndarray:
         for i in range(0, len(pairs), batch_size):
             batch = pairs[i:i + batch_size]
             enc = tokenizer([p["query"] for p in batch], [p["text"] for p in batch], truncation=True,
-                            max_length=MAX_LENGTH, padding=True, return_tensors="pt").to(device)
+                            max_length=max_length, padding=True, return_tensors="pt").to(device)
             chunks.append(torch.softmax(model(**enc).logits, dim=-1).cpu().numpy())
     return np.concatenate(chunks) if chunks else np.zeros((0, len(LABELS)))
 
@@ -120,6 +120,7 @@ def train(
     lr: float = 2e-5,
     max_gd_block: Optional[float] = None,
     seed: int = 42,
+    max_length: int = MAX_LENGTH,
 ) -> Dict:
     import torch
     from transformers import AutoModelForSequenceClassification, AutoTokenizer, get_linear_schedule_with_warmup
@@ -157,7 +158,7 @@ def train(
         for i in range(0, len(train_pairs), batch_size):
             batch = train_pairs[i:i + batch_size]
             enc = tokenizer([p["query"] for p in batch], [p["text"] for p in batch], truncation=True,
-                            max_length=MAX_LENGTH, padding=True, return_tensors="pt").to(device)
+                            max_length=max_length, padding=True, return_tensors="pt").to(device)
             labels = torch.tensor([p["label"] for p in batch], device=device)
             loss = loss_fn(model(**enc).logits, labels)
             loss.backward()
@@ -166,7 +167,7 @@ def train(
             scheduler.step()
             optimizer.zero_grad()
             total += float(loss.detach()) * len(batch)
-        val_metrics = evaluate(predict(model, tokenizer, val_pairs, batch_size * 2, device), val_labels)
+        val_metrics = evaluate(predict(model, tokenizer, val_pairs, batch_size * 2, device, max_length), val_labels)
         history.append({"epoch": epoch, "train_loss": total / len(train_pairs), **val_metrics})
         print(f"epoch {epoch}: loss {total / len(train_pairs):.4f} | val macro-F1 {val_metrics['macro_f1']:.3f} "
               f"| val HD AUROC {val_metrics.get('hd_auroc', float('nan')):.3f} | {time.time() - started:.0f}s")
@@ -176,14 +177,14 @@ def train(
             tokenizer.save_pretrained(output_dir)
 
     model = AutoModelForSequenceClassification.from_pretrained(output_dir).to(device)
-    val_probs = predict(model, tokenizer, val_pairs, batch_size * 2, device)
+    val_probs = predict(model, tokenizer, val_pairs, batch_size * 2, device, max_length)
     tau = choose_tau(val_probs[:, HARMFUL_ID], val_labels, max_gd_block)
     report = {
         "tau_safe": tau["tau_safe"],
         "harmful_label": "harmful",
         "id2label": {str(i): name for i, name in enumerate(LABELS)},
         "base_model": base_model,
-        "max_length": MAX_LENGTH,
+        "max_length": max_length,
         "best_epoch": best_epoch,
         "tau_selection": {**tau, "rule": "max HD-F1 on validation (block when P(HD) > tau)"
                           + (f", GD block rate <= {max_gd_block}" if max_gd_block is not None else "")},
@@ -195,7 +196,7 @@ def train(
     }
     if test_pairs:
         test_labels = np.array([p["label"] for p in test_pairs])
-        report["test"] = evaluate(predict(model, tokenizer, test_pairs, batch_size * 2, device),
+        report["test"] = evaluate(predict(model, tokenizer, test_pairs, batch_size * 2, device, max_length),
                                   test_labels, tau["tau_safe"])
     with open(os.path.join(output_dir, "filter_config.json"), "w", encoding="utf-8") as f:
         json.dump(report, f, indent=1)
@@ -227,7 +228,8 @@ def retune_tau(model_dir: str, val_data_path: str, test_data_path: Optional[str]
 
     val_pairs = load_pairs(val_data_path)
     val_labels = np.array([p["label"] for p in val_pairs])
-    val_probs = predict(model, tokenizer, val_pairs, batch_size, device)
+    max_length = int(report.get("max_length", MAX_LENGTH))
+    val_probs = predict(model, tokenizer, val_pairs, batch_size, device, max_length)
     tau = choose_tau(val_probs[:, HARMFUL_ID], val_labels, max_gd_block)
     previous = report.get("tau_safe")
     report.update({
@@ -240,7 +242,7 @@ def retune_tau(model_dir: str, val_data_path: str, test_data_path: Optional[str]
     if test_data_path:
         test_pairs = load_pairs(test_data_path)
         test_labels = np.array([p["label"] for p in test_pairs])
-        report["test"] = evaluate(predict(model, tokenizer, test_pairs, batch_size, device), test_labels, tau["tau_safe"])
+        report["test"] = evaluate(predict(model, tokenizer, test_pairs, batch_size, device, max_length), test_labels, tau["tau_safe"])
     with open(config_path, "w", encoding="utf-8") as f:
         json.dump(report, f, indent=1)
     print(f"tau_safe {previous} -> {tau['tau_safe']} (val HD F1 {tau['hd_f1']:.3f}, GD blocked {tau['gd_block_rate']:.3f})")
@@ -304,6 +306,7 @@ def main() -> None:
     parser.add_argument("--max-gd-block", type=float, default=None,
                         help="optional cap on the GD block rate when choosing tau (not in Chapter 3; off by default)")
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--max-length", type=int, default=MAX_LENGTH, help=f"tokens for query + document (default {MAX_LENGTH})")
     parser.add_argument("--seeds", type=int, nargs="+", help="train once per seed (Chapter 3: three seeds), e.g. --seeds 42 43 44")
     parser.add_argument("--retune-only", action="store_true",
                         help="do not train; re-select tau for the filter already in --output-dir")
@@ -313,10 +316,11 @@ def main() -> None:
         retune_tau(args.output_dir, args.val, args.test, args.max_gd_block)
     elif args.seeds:
         train_seeds(args.train, args.val, args.output_dir, args.seeds, args.test, base_model=args.base_model,
-                    epochs=args.epochs, batch_size=args.batch_size, lr=args.lr, max_gd_block=args.max_gd_block)
+                    epochs=args.epochs, batch_size=args.batch_size, lr=args.lr, max_gd_block=args.max_gd_block,
+                    max_length=args.max_length)
     else:
         train(args.train, args.val, args.output_dir, args.test, args.base_model, args.epochs,
-              args.batch_size, args.lr, args.max_gd_block, args.seed)
+              args.batch_size, args.lr, args.max_gd_block, args.seed, args.max_length)
 
 
 if __name__ == "__main__":

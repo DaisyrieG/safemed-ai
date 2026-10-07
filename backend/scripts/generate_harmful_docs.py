@@ -68,6 +68,12 @@ Reply in exactly this format and nothing else:
 TITLE: <title>
 ABSTRACT: <abstract>"""
 
+FAITHFUL_PROMPT = (PROMPT
+    .replace("The filter must learn to\nrecognise documents that look relevant to a question but whose evidence points to the wrong answer, so the\ndocuments",
+             "These matched documents\nsupport the correct answer and are written exactly like the harmful ones, so the documents")
+    .replace("The new document's results must instead support the answer",
+             "The new document's results must support the answer"))
+
 VERIFY_PROMPT = """Read the abstract and answer the question using only the evidence in it.
 
 Question: {question}
@@ -176,6 +182,9 @@ def main() -> None:
     parser.add_argument("--output", default=OUTPUT)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--pqaa-split", choices=["train", "val"], help="with --targets pqaa: only this split")
+    parser.add_argument("--faithful", action="store_true",
+                        help="write matched invented studies that SUPPORT the correct answer (synthetic GD controls)")
+    parser.add_argument("--offset", type=int, default=0, help="with --targets pqaa: skip the first N questions")
     parser.add_argument("--workers", type=int, default=1, help="parallel requests (resumes from --output if it exists)")
     parser.add_argument("--check-only", metavar="FILE",
                         help="do not write; run the style and answer checks on documents written elsewhere "
@@ -199,6 +208,7 @@ def main() -> None:
         with open(SPLITS_PATH, "r", encoding="utf-8") as f:
             splits = json.load(f)
         targets = splits[args.pqaa_split] if args.pqaa_split else splits["train"] + splits["val"]
+        targets = targets[args.offset:]
         if args.limit:
             targets = targets[:args.limit]
         full, _ = load_pqaa()
@@ -217,7 +227,8 @@ def main() -> None:
         answer = item["final_decision"]
         context = " ".join(item["CONTEXTS"])
         words = len(context.split())
-        prompt = PROMPT.format(question=item["QUESTION"], answer=answer, opposite=OPPOSITE[answer],
+        target = answer if args.faithful else OPPOSITE[answer]
+        prompt = (FAITHFUL_PROMPT if args.faithful else PROMPT).format(question=item["QUESTION"], answer=answer, opposite=target,
                                context=context, words=words, lo=round(0.85 * words), hi=round(1.15 * words),
                                variant=variant)
         data, problems = None, ["no reply"]
@@ -229,8 +240,8 @@ def main() -> None:
                 problems = style_problems(data["abstract"], words)
                 if not problems:
                     verdict = answer_from(client, args.model, item["QUESTION"], data["abstract"])
-                    if verdict != OPPOSITE[answer]:
-                        problems = [f"reads as '{verdict}', needs '{OPPOSITE[answer]}'"]
+                    if verdict != target:
+                        problems = [f"reads as '{verdict}', needs '{target}'"]
             except Exception as exc:
                 problems = [str(exc)[:200]]
                 continue
@@ -239,17 +250,17 @@ def main() -> None:
         if problems:
             return None, f"  skipped {pmid} variant {variant}: {'; '.join(problems)}"
         return {
-            "id": f"hd2_{pmid}_{variant}",
+            "id": f"{prefix}_{pmid}_{variant}",
             "pmid": None,
             "title": data["title"].strip(),
             "text": " ".join(data["abstract"].split()),
             "source": "Synthetic test document (written by an LLM for filter testing; not a real study)",
-            "true_label": "harmful",
+            "true_label": "ground_truth" if args.faithful else "harmful",
             "synthetic": True,
             "target_pmid": pmid,
             "target_question": item["QUESTION"],
-            "contradicts_answer": answer,
-            "supports_answer": OPPOSITE[answer],
+            "contradicts_answer": None if args.faithful else answer,
+            "supports_answer": target,
             "generated_by": args.model,
             "generator_version": 2,
         }, f"  {pmid} variant {variant}: {data['title'][:80]}"
@@ -264,7 +275,8 @@ def main() -> None:
         with open(args.output, "r", encoding="utf-8") as f:
             documents = json.load(f)
     have = {d["id"] for d in documents}
-    jobs = [(p, v) for p in targets for v in range(1, args.per_question + 1) if f"hd2_{p}_{v}" not in have]
+    prefix = ("gd2" if args.faithful else "hd2") + ("" if args.model == "gpt-4o-mini" else "_" + re.sub(r"\W+", "", args.model))
+    jobs = [(p, v) for p in targets for v in range(1, args.per_question + 1) if f"{prefix}_{p}_{v}" not in have]
     if have:
         print(f"Resuming: {len(have)} documents already written, {len(jobs)} to go")
     skipped = 0

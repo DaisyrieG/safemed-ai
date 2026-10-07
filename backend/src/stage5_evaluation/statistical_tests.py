@@ -196,3 +196,63 @@ class StatisticalAnalyzer:
 
     def holm_adjust(self, p_values: Sequence[float]) -> List[float]:
         return holm_adjust(p_values)
+
+
+def mcnemar_test(control: Sequence[int], treatment: Sequence[int], alpha: float = 0.05) -> Dict[str, Any]:
+    """McNemar's test for paired binary outcomes (Chapter 3, Table 8b): Edwards' continuity correction when
+    b + c >= 25, otherwise the exact binomial test. b = control 1 / treatment 0, c = control 0 / treatment 1."""
+    x1 = np.asarray(control, dtype=int)
+    x2 = np.asarray(treatment, dtype=int)
+    b = int(((x1 == 1) & (x2 == 0)).sum())
+    c = int(((x1 == 0) & (x2 == 1)).sum())
+    if b + c == 0:
+        stat, pval, method = 0.0, 1.0, "no discordant pairs"
+    elif b + c >= 25:
+        stat = (abs(b - c) - 1) ** 2 / (b + c)
+        pval, method = float(stats.chi2.sf(stat, 1)), "McNemar with Edwards' correction"
+    else:
+        stat = float(min(b, c))
+        pval, method = float(stats.binomtest(b, b + c, 0.5).pvalue), "exact binomial (b + c < 25)"
+    return {
+        "test_type": "McNemar (paired binary)",
+        "method": method,
+        "n": int(len(x1)),
+        "b_control_only": b,
+        "c_treatment_only": c,
+        "statistic": round(float(stat), 4),
+        "p_value": round(pval, 6),
+        "significant": bool(pval < alpha),
+        "rate_control": round(float(x1.mean()), 4) if len(x1) else None,
+        "rate_treatment": round(float(x2.mean()), 4) if len(x2) else None,
+        "difference": round(float(x2.mean() - x1.mean()), 4) if len(x1) else None,
+    }
+
+
+def paired_continuous_test(control: Sequence[float], treatment: Sequence[float], alpha: float = 0.05,
+                           n_permutations: int = 10000, seed: int = 42) -> Dict[str, Any]:
+    """Chapter 3 rule for a paired continuous outcome: paired t-test when Shapiro-Wilk does not reject normality
+    of the differences (p >= 0.05), otherwise a paired sign-flip permutation test on the mean difference."""
+    x1 = np.asarray(control, dtype=float)
+    x2 = np.asarray(treatment, dtype=float)
+    d = x2 - x1
+    n = len(d)
+    out = {"test_type": "Paired continuous", "n": int(n), "mean_control": round(float(x1.mean()), 4) if n else None,
+           "mean_treatment": round(float(x2.mean()), 4) if n else None,
+           "mean_diff": round(float(d.mean()), 4) if n else None}
+    if n < 3 or np.allclose(d, d[0] if n else 0):
+        return {**out, "method": "constant differences", "shapiro_p": None, "statistic": 0.0,
+                "p_value": 1.0 if n == 0 or np.allclose(d, 0) else 0.0, "significant": bool(n and not np.allclose(d, 0))}
+    shapiro_p = float(stats.shapiro(d).pvalue)
+    if shapiro_p >= 0.05:
+        res = stats.ttest_rel(x2, x1)
+        stat, pval, method = float(res.statistic), float(res.pvalue), "paired t-test"
+    else:
+        rng = np.random.default_rng(seed)
+        observed = abs(d.mean())
+        flips = rng.choice([-1.0, 1.0], size=(n_permutations, n))
+        perm = np.abs((flips * d).mean(axis=1))
+        stat = float(d.mean())
+        pval = float((1 + (perm >= observed - 1e-12).sum()) / (n_permutations + 1))
+        method = "paired sign-flip permutation (Shapiro-Wilk rejected normality)"
+    return {**out, "method": method, "shapiro_p": round(shapiro_p, 6), "statistic": round(stat, 4),
+            "p_value": round(pval, 6), "significant": bool(pval < alpha)}

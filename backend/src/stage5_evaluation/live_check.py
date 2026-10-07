@@ -56,7 +56,11 @@ def check_query(judge: ClaimJudge, source: Optional[Dict[str, Any]],
 
     proposed / control: {"answer": str, "context": [the five documents passed to the generator]}."""
     def reference(ctx: List[Dict[str, Any]]) -> str:
-        return pubmedqa_reference(source) if source else sources_reference(ctx)
+        if not source:
+            return sources_reference(ctx)
+        trusted = [d for d in ctx if d.get("true_label") != "harmful"]
+        return "\n\n".join([pubmedqa_reference(source)]
+                             + [f"Retrieved document {i}: {d.get('text', '')}" for i, d in enumerate(trusted, 1)])
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         p = pool.submit(check_answer, judge, proposed["answer"], reference(proposed["context"]), proposed["context"])

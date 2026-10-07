@@ -30,6 +30,7 @@ from src.api.schemas import (
 )
 from src.pipeline import SafeMedPipeline, mark_source_abstract, _normalise
 from src.stage4_generator.generator import GeneratorUnavailableError
+from src.stage4_generator.llm_client import chat_completion
 from src.stage5_evaluation.judge import ClaimJudge
 from src.stage5_evaluation.live_check import check_query, extract_decision
 
@@ -207,6 +208,34 @@ def _float_or_none(value):
         return None
 
 
+NOT_BIOMEDICAL = ("SafeMed AI only answers biomedical and health questions (medicine, diseases, treatments, "
+                  "drugs, biology). Please ask a biomedical question.")
+_domain_cache: Dict[str, bool] = {}
+
+
+def is_biomedical(pipeline: SafeMedPipeline, query: str) -> bool:
+    """One-word GPT check that the question is biomedical; True when the check cannot run (never blocks on an error)."""
+    if os.getenv("SAFEMED_DOMAIN_CHECK", "1").strip() == "0":
+        return True
+    key = _normalise(query)
+    if key in _domain_cache:
+        return _domain_cache[key]
+    generator = pipeline.generator
+    if generator.client is None:
+        return True
+    prompt = ("Is the following question about biomedicine, medicine, health, healthcare, pharmacology, "
+              "or the life sciences? Reply with exactly one word: yes or no.\n\nQuestion: " + query)
+    try:
+        reply = chat_completion(generator.client, model=generator.model, temperature=0.0, max_tokens=2,
+                                messages=[{"role": "user", "content": prompt}])
+        answer = (reply.choices[0].message.content or "").strip().lower()
+    except Exception as exc:
+        print(f"[API] Domain check skipped: {exc}")
+        return True
+    _domain_cache[key] = not answer.startswith("no")
+    return _domain_cache[key]
+
+
 @app.post("/api/query", response_model=ClinicalResponse, summary="Execute Clinical Query")
 def search_clinical_query(req: ClinicalQueryRequest):
     """Runs a clinical question through Stages 1-4."""
@@ -222,10 +251,17 @@ def search_clinical_query(req: ClinicalQueryRequest):
             detail=f"Pipeline is unavailable: {exc}"
         ) from exc
 
+    if not req.case_id and not is_biomedical(pipeline, query_text):
+        raise HTTPException(status_code=422, detail=NOT_BIOMEDICAL)
+
     target_pmid = _case_pmid(req.case_id)
     try:
         result = pipeline.run(query_text, target_pmid=target_pmid)
     except GeneratorUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        if type(exc).__name__ != "LivePubMedError":
+            raise
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     control_answer = (result.get("evaluation_breakdown") or {}).get("control", {}).get("answer") or ""

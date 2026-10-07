@@ -18,12 +18,27 @@ HUMAN_LABELS = os.path.join(ANNOTATIONS, "human_labels.jsonl")
 CODES = {"GD": "ground_truth", "MD": "mediocre", "HD": "harmful"}
 NAMES = {v: k for k, v in CODES.items()}
 KAPPA_THRESHOLD = 0.80
-COLUMNS = ["item", "question", "document_title", "document_text", "annotator_A", "annotator_B", "notes"]
+COLUMNS = ["item", "question", "correct_answer", "document_title", "document_text", "annotator_A", "annotator_B", "notes"]
 
 
-def sample(n: int, seed: int) -> None:
+def paths(prefix: str):
+    """Sheet, key, report and agreed-labels files; a prefix keeps separate review rounds apart."""
+    name = (prefix + "_") if prefix else ""
+    return (os.path.join(ANNOTATIONS, f"{name}annotation_sheet.csv"), os.path.join(ANNOTATIONS, f"{name}annotation_key.json"),
+            os.path.join(ANNOTATIONS, f"{name}annotation_agreement.json"), os.path.join(ANNOTATIONS, f"{name}human_labels.jsonl"))
+
+
+def sample(n: int, seed: int, labels_path: str = "", prefix: str = "") -> None:
+    sheet_path, key_path, _, _ = paths(prefix)
     rows = []
-    for split in ("train", "val", "test"):
+    if labels_path:
+        with open(labels_path, "r", encoding="utf-8") as f:
+            for line in f:
+                if line.strip():
+                    r = json.loads(line)
+                    rows.append({**r, "label": r.get("llm_label") or r.get("label"),
+                                 "label_source": r.get("label_source", "llm")})
+    for split in (() if labels_path else ("train", "val", "test")):
         path = os.path.join(ANNOTATIONS, f"filter_{split}.jsonl")
         if os.path.exists(path):
             with open(path, "r", encoding="utf-8") as f:
@@ -40,19 +55,23 @@ def sample(n: int, seed: int) -> None:
     for label in CODES.values():
         pool = by_label.get(label, [])
         picked += rng.sample(pool, min(per_label, len(pool)))
+    if len(picked) < n:
+        taken = {id(r) for r in picked}
+        rest = [r for r in rows if id(r) not in taken]
+        picked += rng.sample(rest, min(n - len(picked), len(rest)))
     rng.shuffle(picked)
 
     os.makedirs(ANNOTATIONS, exist_ok=True)
-    with open(SHEET, "w", encoding="utf-8-sig", newline="") as f:
+    with open(sheet_path, "w", encoding="utf-8-sig", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(COLUMNS)
         for i, row in enumerate(picked, 1):
-            writer.writerow([i, row["query"], row.get("title", ""), row.get("text", ""), "", "", ""])
-    with open(KEY, "w", encoding="utf-8") as f:
+            writer.writerow([i, row["query"], row.get("reference_answer", ""), row.get("title", ""), row.get("text", ""), "", "", ""])
+    with open(key_path, "w", encoding="utf-8") as f:
         json.dump({str(i): {k: row.get(k) for k in ("pubid", "doc_id", "label", "label_source", "query", "title", "text")}
                    for i, row in enumerate(picked, 1)}, f, indent=1, ensure_ascii=False)
     counts = Counter(NAMES[r["label"]] for r in picked)
-    print(f"Wrote {len(picked)} pairs to {SHEET} ({dict(counts)}); automatic labels kept in {KEY}")
+    print(f"Wrote {len(picked)} pairs to {sheet_path} ({dict(counts)}); automatic labels kept in {key_path}")
     print("Annotators fill annotator_A / annotator_B with GD, MD or HD. Don't share the key file with them.")
 
 
@@ -63,10 +82,12 @@ def _code(value: str, item: str, column: str) -> str:
     return value
 
 
-def score(sheet_path: str) -> None:
+def score(sheet_path: str, prefix: str = "") -> None:
     from sklearn.metrics import cohen_kappa_score, confusion_matrix
 
-    with open(KEY, "r", encoding="utf-8") as f:
+    default_sheet, key_path, report_path, human_path = paths(prefix)
+    sheet_path = sheet_path or default_sheet
+    with open(key_path, "r", encoding="utf-8") as f:
         key = json.load(f)
     with open(sheet_path, "r", encoding="utf-8-sig", newline="") as f:
         sheet = list(csv.DictReader(f))
@@ -105,9 +126,9 @@ def score(sheet_path: str) -> None:
     if agreed:
         report["accuracy_automatic_vs_agreed"] = round(sum(x == z for _, x, z in agreed) / len(agreed), 4)
 
-    with open(REPORT, "w", encoding="utf-8") as f:
+    with open(report_path, "w", encoding="utf-8") as f:
         json.dump(report, f, indent=1)
-    with open(HUMAN_LABELS, "w", encoding="utf-8") as f:
+    with open(human_path, "w", encoding="utf-8") as f:
         for item, code, _ in agreed:
             k = key[item]
             f.write(json.dumps({"pubid": k["pubid"], "query": k["query"], "doc_id": k["doc_id"], "title": k["title"],
@@ -124,7 +145,7 @@ def score(sheet_path: str) -> None:
               f"of {len(agreed)} agreed pairs")
     print(f"{len(report['disagreements'])} disagreements to discuss: items "
           f"{', '.join(d['item'] for d in report['disagreements']) or 'none'}")
-    print(f"Saved {REPORT} and {HUMAN_LABELS}")
+    print(f"Saved {report_path} and {human_path}")
 
 
 def main() -> None:
@@ -133,13 +154,16 @@ def main() -> None:
     s = sub.add_parser("sample", help="write the blind annotation sheet")
     s.add_argument("--n", type=int, default=102, help="pairs to sample (split evenly over GD, MD, HD)")
     s.add_argument("--seed", type=int, default=42)
+    s.add_argument("--labels", default="", help="LLM labels JSONL (e.g. data/annotations/pqaa_labels_gpt4omini.jsonl)")
+    s.add_argument("--prefix", default="", help="name for this review round, e.g. gpt300")
     c = sub.add_parser("score", help="compute Cohen's kappa from the filled sheet")
-    c.add_argument("--sheet", default=SHEET, help="the filled sheet, saved as CSV")
+    c.add_argument("--sheet", default="", help="the filled sheet, saved as CSV (default: this round's sheet)")
+    c.add_argument("--prefix", default="", help="the review round used when sampling")
     args = parser.parse_args()
     if args.command == "sample":
-        sample(args.n, args.seed)
+        sample(args.n, args.seed, args.labels, args.prefix)
     else:
-        score(args.sheet)
+        score(args.sheet, args.prefix)
 
 
 if __name__ == "__main__":

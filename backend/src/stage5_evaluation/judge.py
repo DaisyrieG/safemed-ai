@@ -9,6 +9,9 @@ from src.stage4_generator.llm_client import chat_completion, make_client
 
 DEFAULT_JUDGE_MODEL = "gpt-4o"
 LABELS = ("SUPPORTED", "UNSUPPORTED", "CONTRADICTED")
+_ABOUT_DOCUMENTS = re.compile(
+    r"\b(provided|retrieved|given|available)\s+(documents?|sources?|studies|abstracts?|evidence)\b"
+    r"|\b(the|these|some|none of the|no)\s+(documents?|sources?)\b", re.IGNORECASE)
 
 BATCH_SCHEMA = {
     "type": "json_schema",
@@ -148,7 +151,7 @@ class ClaimJudge:
         )
         lines = (self._ask(prompt) or "").split("\n")
         claims = [re.sub(r"^\s*[-*•\d.)]+\s*", "", line).strip() for line in lines]
-        return [c for c in claims if c and not c.lower().startswith("decision:")]
+        return [c for c in claims if c and not c.lower().startswith("decision:") and not _ABOUT_DOCUMENTS.search(c)]
 
     def verify_claims(self, claims: List[str], reference: str) -> List[Dict[str, str]]:
         """Labels each claim SUPPORTED / UNSUPPORTED / CONTRADICTED against the reference evidence."""
@@ -157,7 +160,8 @@ class ClaimJudge:
             prompt = (
                 "You are a strict biomedical NLI (Natural Language Inference) verifier. Given the reference "
                 "evidence, label the claim SUPPORTED (entailed by the evidence), CONTRADICTED (conflicts with "
-                "the evidence) or UNSUPPORTED (neither).\n\n"
+                "the evidence) or UNSUPPORTED (neither). "
+                "A claim is SUPPORTED when ANY evidence passage entails it (the passages may describe different studies); label it CONTRADICTED only when it conflicts with the evidence and no passage supports it.\n\n"
                 f"Reference evidence:\n{reference}\n\nClaim:\n{claim}\n\n"
                 'Output JSON: {"status": "SUPPORTED"|"CONTRADICTED"|"UNSUPPORTED", "reasoning": "..."}'
             )
@@ -176,7 +180,8 @@ class ClaimJudge:
         prompt = (
             "You are a strict biomedical NLI (Natural Language Inference) verifier. Given the reference "
             "evidence, label EACH claim SUPPORTED (entailed by the evidence), CONTRADICTED (conflicts with "
-            "the evidence) or UNSUPPORTED (neither).\n\n"
+            "the evidence) or UNSUPPORTED (neither). "
+            "A claim is SUPPORTED when ANY evidence passage entails it (the passages may describe different studies); label it CONTRADICTED only when it conflicts with the evidence and no passage supports it.\n\n"
             f"Reference evidence:\n{reference}\n\nClaims:\n{numbered}\n\n"
             'Output JSON: {"verdicts": [{"index": 1, "status": "SUPPORTED"|"CONTRADICTED"|"UNSUPPORTED", '
             '"reasoning": "..."}, ...]} with one entry per claim.'

@@ -102,3 +102,11 @@ def test_hallucination_check_endpoint(client):
     assert check["reference"] == "sources"
     assert check["proposed"]["hallucinated"] is True
     assert check["control"]["n_claims"] == 2
+
+
+def test_non_biomedical_question_is_refused(client, monkeypatch):
+    monkeypatch.setattr(api, "is_biomedical", lambda pipeline, query: False)
+    res = client.post("/api/query", json={"query": "is banana yellow?"})
+    assert res.status_code == 422 and res.json()["detail"] == api.NOT_BIOMEDICAL
+    preset = client.post("/api/query", json={"query": "is banana yellow?", "case_id": "pqa-24318956", "check_hallucination": False})
+    assert preset.status_code == 200

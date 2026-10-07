@@ -1,0 +1,106 @@
+{
+ "key": {
+  "5ccc42f534": {
+   "pubid": "26872979",
+   "condition": "control"
+  },
+  "33fa53913d": {
+   "pubid": "26872979",
+   "condition": "treatment"
+  },
+  "20ed33456c": {
+   "pubid": "16859517",
+   "condition": "control"
+  },
+  "7d4e795e29": {
+   "pubid": "16859517",
+   "condition": "treatment"
+  },
+  "9d7b1393c5": {
+   "pubid": "20224051",
+   "condition": "control"
+  },
+  "a88d3446f4": {
+   "pubid": "20224051",
+   "condition": "treatment"
+  },
+  "b6e942a621": {
+   "pubid": "24485929",
+   "condition": "control"
+  },
+  "6bb9c3c82a": {
+   "pubid": "24485929",
+   "condition": "treatment"
+  },
+  "baf9128f14": {
+   "pubid": "10695205",
+   "condition": "control"
+  },
+  "784ef04082": {
+   "pubid": "10695205",
+   "condition": "treatment"
+  },
+  "26cc41ba13": {
+   "pubid": "24507048",
+   "condition": "control"
+  },
+  "a9912e31db": {
+   "pubid": "24507048",
+   "condition": "treatment"
+  },
+  "6047fc11a0": {
+   "pubid": "22052939",
+   "condition": "control"
+  },
+  "02e7691c60": {
+   "pubid": "22052939",
+   "condition": "treatment"
+  },
+  "ae9e6823e6": {
+   "pubid": "15090790",
+   "condition": "control"
+  },
+  "fdb286c04a": {
+   "pubid": "15090790",
+   "condition": "treatment"
+  },
+  "37b1215e97": {
+   "pubid": "15708545",
+   "condition": "control"
+  },
+  "25b12a5447": {
+   "pubid": "15708545",
+   "condition": "treatment"
+  },
+  "114f0857ff": {
+   "pubid": "22955852",
+   "condition": "control"
+  },
+  "97e103d907": {
+   "pubid": "22955852",
+   "condition": "treatment"
+  }
+ },
+ "order": [
+  "33fa53913d",
+  "784ef04082",
+  "baf9128f14",
+  "37b1215e97",
+  "a88d3446f4",
+  "7d4e795e29",
+  "6bb9c3c82a",
+  "ae9e6823e6",
+  "fdb286c04a",
+  "25b12a5447",
+  "5ccc42f534",
+  "9d7b1393c5",
+  "b6e942a621",
+  "20ed33456c",
+  "97e103d907",
+  "114f0857ff",
+  "a9912e31db",
+  "26cc41ba13",
+  "6047fc11a0",
+  "02e7691c60"
+ ]
+}

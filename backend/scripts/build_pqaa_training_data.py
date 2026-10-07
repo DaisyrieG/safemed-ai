@@ -60,7 +60,8 @@ def main():
             split = split_of.get(str(d.get("target_pmid")))
             if split:
                 rows[split].append({"pubid": d["target_pmid"], "query": d["target_question"], "doc_id": d["id"],
-                                    "text": d["text"], "label": "harmful", "label_source": f"synthetic:{d.get('generated_by')}"})
+                                    "text": d["text"], "label": d.get("true_label", "harmful"),
+                                    "label_source": f"synthetic:{d.get('generated_by')}"})
 
     for split, items in rows.items():
         path = os.path.join(OUT_DIR, f"{args.prefix}_{split}.jsonl")

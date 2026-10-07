@@ -83,15 +83,16 @@ def load_pair_labels(path: Optional[str]) -> Dict[Tuple[str, str], str]:
     return labels
 
 
-def reference_evidence(rec: Dict[str, str], gd_docs: List[Dict[str, Any]]) -> str:
-    """Chapter 3: the query's PubMedQA context, long answer and reference label, plus every document
-    labelled GD in the answer's own context."""
+def reference_evidence(rec: Dict[str, str], docs: List[Dict[str, Any]]) -> str:
+    """The query's PubMedQA context, long answer and reference label, plus every non-harmful (GD or MD)
+    document in the answer's own context: a claim drawn from real retrieved literature is grounded."""
     parts = [f"Context: {rec['context']}", f"Conclusion: {rec['long_answer']}", f"Reference answer: {rec['final_decision']}"]
-    parts += [f"Ground-truth document {i}: {d.get('text', '')}" for i, d in enumerate(gd_docs, 1)]
+    parts += [f"Retrieved document {i}: {d.get('text', '')}" for i, d in enumerate(docs, 1)]
     return "\n\n".join(parts)
 
 
-def preflight(pipe: SafeMedPipeline, judge: ClaimJudge, pair_labels: Dict, allow_same_judge: bool) -> None:
+def preflight(pipe: SafeMedPipeline, judge: ClaimJudge, pair_labels: Dict, allow_same_judge: bool,
+              pilot: bool = False) -> None:
     problems = []
     if pipe.filter is None or pipe.filter.scorer_name != "cross_encoder":
         problems.append("Stage 2 must use the fine-tuned cross-encoder.")
@@ -110,7 +111,7 @@ def preflight(pipe: SafeMedPipeline, judge: ClaimJudge, pair_labels: Dict, allow
                         "set SAFEMED_JUDGE_MODEL or pass --allow-same-judge to record it as a deviation.")
     n_harm = sum(1 for d in pipe.retriever.corpus if d.get("true_label") == "harmful")
     n_harm += sum(1 for v in pair_labels.values() if v == "harmful")
-    if n_harm == 0:
+    if n_harm == 0 and not pilot:
         problems.append("No document is labelled 'harmful' in the corpus or --labels, so H1, H3 and SOP1 cannot be computed.")
     if problems:
         raise BenchmarkAbort("Not a live run:\n  - " + "\n  - ".join(problems))
@@ -184,16 +185,17 @@ def _context(top5: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 def judge_answer(judge: ClaimJudge, rec: Dict[str, str], cond: Dict[str, Any]) -> Dict[str, Any]:
     context = _context(cond["top5"])
-    gd = [d for d in context if d["true_label"] == "ground_truth"]
-    return check_answer(judge, cond["answer"], reference_evidence(rec, gd), context)
+    trusted = [d for d in context if d["true_label"] != "harmful"]
+    return check_answer(judge, cond["answer"], reference_evidence(rec, trusted), context)
 
 
 def judge_all(judge: ClaimJudge, blinding: Dict, traces: Dict[str, Dict], records: Dict[str, Dict],
-              out_dir: str, pace: float) -> Dict[str, Dict]:
+              out_dir: str, pace: float, judged_ids: Optional[set] = None) -> Dict[str, Dict]:
     """Step 9: claims, labels, answer-level flag and the separate harmful-document attribution pass."""
     path = os.path.join(out_dir, JUDGMENTS)
     done = {r["code"]: r for r in read_jsonl(path)}
-    todo = [c for c in blinding["order"] if c not in done]
+    todo = [c for c in blinding["order"] if c not in done
+            and (judged_ids is None or blinding["key"][c]["pubid"] in judged_ids)]
     print(f"Judge ({judge.model}): {len(done)} answers already judged, {len(todo)} to go")
     for i, code in enumerate(todo, 1):
         info = blinding["key"][code]
@@ -239,7 +241,8 @@ def reliability(args, pipe: SafeMedPipeline, judge: ClaimJudge, blinding: Dict, 
         if rescore_codes else None,
     }
 
-    pubids = sorted(traces)
+    judged_pubids = {blinding["key"][c]["pubid"] for c in codes}
+    pubids = sorted(p for p in traces if p in judged_pubids)
     regen_ids = rng.sample(pubids, min(len(pubids), round(args.regen_frac * len(pubids))))
     path = os.path.join(out_dir, REGENERATIONS)
     regenerated = {r["pubid"]: r for r in read_jsonl(path)}
@@ -321,7 +324,8 @@ def analyze(traces: Dict[str, Dict], blinding: Dict, judgments: Dict[str, Dict],
                                            "definition": "GD documents in the 50 candidates blocked by Stage 2 (not reinstated) / GD documents"},
         "H3_hd_at_top5_shift": {**_test(wilcoxon_paired(col("hd_at5_control"), col("hd_at5_treatment"), alternative="less")),
                                 "alternative": "treatment HD@Top-5 < control HD@Top-5"},
-        "H4_unsupported_claim_rate": {**_test(wilcoxon_one_sample(col("ucr_treatment"), reference=H4_MARGIN, alternative="less")),
+        "H4_unsupported_claim_rate": {**_test(wilcoxon_one_sample([r["ucr_treatment"] for r in per_query if r["judged_treatment"]],
+                                                                  reference=H4_MARGIN, alternative="less")),
                                       "alternative": f"median treatment UCR < {H4_MARGIN}"},
     }
 
@@ -387,7 +391,7 @@ def run_benchmark(args) -> Dict[str, Any]:
     pair_labels = load_pair_labels(args.labels)
     pipe = SafeMedPipeline(filter_model_path=args.filter_model, corpus_path=args.corpus)
     judge = ClaimJudge()
-    preflight(pipe, judge, pair_labels, args.allow_same_judge)
+    preflight(pipe, judge, pair_labels, args.allow_same_judge, args.pilot)
 
     def label(pubid: str, doc: Dict[str, Any]) -> str:
         return pair_labels.get((pubid, str(doc.get("id")))) or doc.get("true_label") or "mediocre"
@@ -405,7 +409,8 @@ def run_benchmark(args) -> Dict[str, Any]:
     blinding = blind(list(traces.values()), args.output_dir, args.seed)
 
     if "judge" in phases:
-        judgments = judge_all(judge, blinding, traces, records, args.output_dir, args.judge_pace)
+        judged_ids = set(list(records)[: args.judge_n]) if args.judge_n else None
+        judgments = judge_all(judge, blinding, traces, records, args.output_dir, args.judge_pace, judged_ids)
     else:
         judgments = {r["code"]: r for r in read_jsonl(os.path.join(args.output_dir, JUDGMENTS))}
 
@@ -421,7 +426,7 @@ def run_benchmark(args) -> Dict[str, Any]:
         "judge_same_as_generator": judge.model == pipe.generator.model,
         "leave_self_out": True,
         "blinded_random_order": True,
-        "claim_reference": "PubMedQA context + LONG_ANSWER + final_decision + GD documents in the answer's context",
+        "claim_reference": "PubMedQA context + LONG_ANSWER + final_decision + non-harmful (GD/MD) documents in the answer's context",
         "files": {k: os.path.relpath(os.path.join(args.output_dir, v), BACKEND)
                   for k, v in (("traces", TRACES), ("blinding_key", BLINDING), ("judgments", JUDGMENTS))},
     }
@@ -465,6 +470,9 @@ def main(argv=None):
     p.add_argument("--judge-pace", type=float, default=0.0, help="seconds between judged answers (rate limits)")
     p.add_argument("--rescore-frac", type=float, default=0.1, help="share of answers re-scored by the judge (step 11)")
     p.add_argument("--regen-frac", type=float, default=0.1, help="share of queries whose answer is regenerated (step 11)")
+    p.add_argument("--judge-n", type=int, default=0,
+                   help="judge only the answers of the first N queries (H4 and hallucination rates); H1-H3 use all")
+    p.add_argument("--pilot", action="store_true", help="dry run: allow a sample without HD labels (not for reported results)")
     p.add_argument("--n-bootstrap", type=int, default=2000)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--log-interval", type=int, default=25)

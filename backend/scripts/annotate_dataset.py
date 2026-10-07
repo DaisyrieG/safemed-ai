@@ -62,6 +62,27 @@ def sample_pairs(retriever, pqaa, splits, rng, n_pairs: int = N_ANNOT):
     return pairs
 
 
+def test_pairs(retriever, pqaa, pubids):
+    """Every top-50 candidate (leave-self-out) of each test query: the gold labels H1, H3 and SOP1 need."""
+    pairs = []
+    for n, pubid in enumerate(pubids, 1):
+        item = pqaa[pubid]
+        for rank, doc in enumerate(retriever.retrieve(item["QUESTION"], top_k=50, exclude_id=pubid), 1):
+            pairs.append({
+                "pubid": pubid,
+                "split": "test",
+                "query": item["QUESTION"],
+                "doc_id": doc["id"],
+                "text": doc["text"],
+                "retrieval_rank": rank,
+                "retrieval_score": round(doc["retrieval_score"], 4),
+                "reference_answer": f"{item.get('final_decision', '')}. {item['LONG_ANSWER']}",
+            })
+        if n % 25 == 0:
+            print(f"  retrieved {n}/{len(pubids)} test queries")
+    return pairs
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--limit", type=int, default=0, help="label only the first N pairs (quick test)")
@@ -72,6 +93,8 @@ def main():
     parser.add_argument("--batch-size", type=int, default=10, help="pairs per request (default 10)")
     parser.add_argument("--pace", type=float, default=40.0,
                         help="minimum seconds between requests, to stay under the tokens-per-minute limit")
+    parser.add_argument("--test-queries", type=int, default=0,
+                        help="label all 50 candidates of the first N test queries (benchmark gold labels) instead of sampling")
     parser.add_argument("--workers", type=int, default=1, help="batches labelled in parallel (OpenAI: 6 is fine)")
     args = parser.parse_args()
 
@@ -89,14 +112,16 @@ def main():
     with open(SPLITS_PATH, "r", encoding="utf-8") as f:
         splits = json.load(f)
     full, _ = load_pqaa()
-    needed = set(splits["train"]) | set(splits["val"])
+    test_ids = splits["test"][: args.test_queries] if args.test_queries else []
+    needed = set(test_ids) if test_ids else set(splits["train"]) | set(splits["val"])
     pqaa = {k: {f: full[k].get(f) for f in ("QUESTION", "LONG_ANSWER", "final_decision")} for k in needed}
     del full
     gc.collect()
     retriever = BiEncoderRetriever(corpus_path=PQAA_CORPUS)
 
     print("Retrieving candidates ...")
-    pairs = sample_pairs(retriever, pqaa, splits, random.Random(SEED), args.pairs)
+    pairs = (test_pairs(retriever, pqaa, test_ids) if test_ids
+             else sample_pairs(retriever, pqaa, splits, random.Random(SEED), args.pairs))
     if args.limit:
         pairs = pairs[: args.limit]
 

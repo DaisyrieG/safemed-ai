@@ -88,6 +88,10 @@ class SafeMedPipeline:
         """corpus_path defaults to SAFEMED_CORPUS (demo | pubmedqa | <path>), else demo."""
         self.use_filter = use_filter
 
+        if retriever is None and not corpus_path and os.getenv("SAFEMED_CORPUS", "").strip().lower() == "live_pubmed":
+            from src.stage1_retriever.live_pubmed import LivePubMedRetriever
+            print("[Pipeline] Corpus: live PubMed (NCBI E-utilities)")
+            retriever = LivePubMedRetriever(top_k=50)
         if retriever is None:
             corpus_path = corpus_path or resolve_corpus_path(os.getenv("SAFEMED_CORPUS", "demo"))
             print(f"[Pipeline] Corpus: {corpus_path}")

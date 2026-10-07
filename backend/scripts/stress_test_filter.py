@@ -42,6 +42,8 @@ def main() -> None:
     parser.add_argument("--v2", default=OUTPUT, help="realistic HD file from generate_harmful_docs.py")
     parser.add_argument("--filter-model", default=None, help="filter folder (default SAFEMED_FILTER_MODEL or models/safemed_filter)")
     parser.add_argument("--output", default=RESULT)
+    parser.add_argument("--extra", nargs="*", default=[], metavar="NAME=PATH",
+                        help="more held-out sets, e.g. hd_gpt4omini=results/diag_test_hd_gpt4omini.json")
     args = parser.parse_args()
 
     with open(FILTER_TEST, "r", encoding="utf-8") as f:
@@ -57,6 +59,10 @@ def main() -> None:
         sets["v2_realistic_HD"] = [d for d in load_json(args.v2) if d["target_pmid"] in test_pmids]
     else:
         print(f"No v2 file at {args.v2}; run scripts/generate_harmful_docs.py first. Scoring v1 only.")
+
+    for spec in args.extra:
+        name, path = spec.split("=", 1)
+        sets[name] = [d for d in load_json(path) if d["target_pmid"] in test_pmids]
 
     harm_filter = HarmfulDocumentFilter(model_path=args.filter_model or resolve_filter_model_path())
     print(f"Filter: {harm_filter.model_path} | tau_safe = {harm_filter.harmful_threshold}\n")
@@ -83,7 +89,17 @@ def main() -> None:
         if s["n"]:
             print(f"{s['set']:28s} {s['n']:4d} {s['blocked_rate']:8.1%} {s['median_p_hd']:10.3f} "
                   f"{s['median_words']:6.0f} {s['style_word_rate']:6.0%} {s['conclusion_phrase_rate']:7.0%}")
-    print("\nFor HD sets 'blocked' is the recall; for the real abstracts it is the false-block rate.")
+    print("\nFor HD sets 'blocked' is the recall; for GD sets it is the false-block rate.")
+
+    from sklearn.metrics import roc_auc_score
+    gd_sets = [n for n in per_document if "GD" in n or n.startswith("gd")]
+    hd_sets = [n for n in per_document if n not in gd_sets]
+    for g in gd_sets:
+        for h in hd_sets:
+            neg, pos = per_document[g], per_document[h]
+            if neg and pos:
+                auc = roc_auc_score([0] * len(neg) + [1] * len(pos), [r["p_hd"] for r in neg + pos])
+                print(f"AUROC {h} vs {g}: {auc:.3f}")
 
     os.makedirs(os.path.dirname(args.output), exist_ok=True)
     with open(args.output, "w", encoding="utf-8") as f:
