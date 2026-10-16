@@ -1,3 +1,4 @@
+"""Checks that the FAISS index matches the corpus by re-encoding three documents and comparing them with the stored vectors. Run from backend/: python scripts/verify_index.py"""
 import json
 import faiss
 import numpy as np

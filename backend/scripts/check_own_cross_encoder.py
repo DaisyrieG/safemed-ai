@@ -1,4 +1,4 @@
-# Quick check of the cross-encoder on the real MiniLM: builds it, scores one pair, saves it and loads it back.
+"""Builds the cross-encoder on MiniLM, scores one pair, and checks that saving and loading give identical output. Run from backend/: python scripts/check_own_cross_encoder.py"""
 import os
 import sys
 import tempfile

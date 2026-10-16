@@ -1,3 +1,4 @@
+"""Writes two blank checker sheets for the test-set questions and a separate answer key with the dataset labels. Run from backend/: python scripts/export_label_check.py"""
 import csv
 import json
 import os

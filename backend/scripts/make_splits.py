@@ -1,3 +1,4 @@
+"""Creates the stratified train/val/test split of the questions (by final_decision) and saves it to data/processed/pqaa_splits.json. Run from backend/: python scripts/make_splits.py"""
 import json
 import os
 import shutil

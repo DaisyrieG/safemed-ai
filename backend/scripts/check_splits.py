@@ -1,3 +1,4 @@
+"""Prints the split sizes and seed, the overlap between splits and the test-set label counts. Run from backend/: python scripts/check_splits.py"""
 import json
 from collections import Counter
 splits = json.load(open("data/processed/pqaa_splits.json", encoding="utf-8"))

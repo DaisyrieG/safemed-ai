@@ -1,3 +1,4 @@
+"""Samples 30 validation questions with one retrieved document each, writes a blank reviewer sheet and the LLM labels. Run from backend/: python scripts/pilot_annotation.py"""
 import csv
 import json
 import os

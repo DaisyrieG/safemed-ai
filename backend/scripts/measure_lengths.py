@@ -1,3 +1,4 @@
+"""Measures question and question-document pair lengths in MiniLM tokens and the share of pairs that fit each token limit. Run from backend/: python scripts/measure_lengths.py"""
 import json
 import random
 

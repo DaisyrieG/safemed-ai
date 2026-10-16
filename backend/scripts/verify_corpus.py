@@ -1,4 +1,4 @@
-# Checks that the corpus and the splits really come from the source dataset (ori_pqaa.json).
+"""Checks that the corpus and the splits come from the source dataset (ori_pqaa.json). Run from backend/: python scripts/verify_corpus.py"""
 import json
 import os
 import sys

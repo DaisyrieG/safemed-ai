@@ -1,3 +1,4 @@
+"""Prints the size and label distribution of ori_pqaa.json and one example item. Run from backend/: python scripts/explore_dataset.py"""
 import json
 from collections import Counter
 

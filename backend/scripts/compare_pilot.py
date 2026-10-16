@@ -1,4 +1,7 @@
 """Cohen's kappa and disagreements between two label files (reviewer vs. LLM, or reviewer vs. reviewer)."""
+# Cohen's kappa: kappa = (po - pe) / (1 - pe).
+# Usage: python scripts/compare_pilot.py [reviewer.csv] [gpt.jsonl]
+#        python scripts/compare_pilot.py pilot/pilot_reviewer1.csv pilot/pilot_reviewer2.csv  (reviewer vs. reviewer)
 import csv
 import json
 import sys
