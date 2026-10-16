@@ -28,7 +28,7 @@ export default function SingleQueryResults({ breakdown }: Props) {
               </span>
             </div>
             <h3 className="text-sm font-semibold text-foreground">
-              Matched-Pair Comparison: Standard RAG vs. SafeMed AI
+              Matched-Pair Comparison: Standard RAG vs. SafeMedAI
             </h3>
             <p className="text-[11px] text-muted-foreground font-mono truncate max-w-xl">
               Query: &ldquo;{breakdown.query}&rdquo;
@@ -164,7 +164,7 @@ export default function SingleQueryResults({ breakdown }: Props) {
                     Standard RAG (Control)
                   </th>
                   <th className="p-2.5 font-semibold text-center" style={{ color: 'var(--color-treatment, #10b981)' }}>
-                    SafeMed AI (Proposed)
+                    SafeMedAI (Proposed)
                   </th>
                   <th className="p-2.5 font-semibold text-center text-foreground">Treatment Effect</th>
                 </tr>
@@ -311,17 +311,17 @@ export default function SingleQueryResults({ breakdown }: Props) {
               )}
             </div>
 
-            {/* SafeMed AI (Proposed) */}
+            {/* SafeMedAI (Proposed) */}
             <div className="rounded-xl border border-emerald-500/30 bg-emerald-50/10 dark:bg-emerald-950/10 p-4 space-y-3">
               <div className="flex items-center justify-between border-b border-emerald-500/20 pb-2">
                 <span className="text-xs font-mono font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5">
-                  <span>SafeMed AI (Proposed)</span>
+                  <span>SafeMedAI (Proposed)</span>
                   <span className="text-[10px] font-normal px-1.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20">
                     Filtered
                   </span>
                 </span>
                 <span className="text-[10px] font-mono px-2 py-0.5 rounded font-semibold bg-emerald-500/20 text-emerald-700 dark:text-emerald-300">
-                  ✓ Verified Safe Context (0% HD)
+                  ✓ No Documents Flagged as Harmful
                 </span>
               </div>
 
@@ -359,7 +359,7 @@ export default function SingleQueryResults({ breakdown }: Props) {
       {activeTab === 'docs' && (
         <div className="p-4 space-y-4">
           <p className="text-xs text-muted-foreground font-mono">
-            Inspect the 5 documents forwarded to Stage 4 (Generator). Notice how Standard RAG admits misleading/harmful literature, whereas SafeMed AI expels them.
+            Inspect the 5 documents forwarded to Stage 4 (Generator). Notice how Standard RAG admits misleading/harmful literature, whereas SafeMedAI expels them.
           </p>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -438,7 +438,7 @@ export default function SingleQueryResults({ breakdown }: Props) {
             {/* Proposed Top-5 */}
             <div className="space-y-2">
               <span className="text-xs font-mono font-bold text-emerald-600 dark:text-emerald-400 flex items-center justify-between">
-                <span>SafeMed AI Top-5 Documents</span>
+                <span>SafeMedAI Top-5 Documents</span>
                 <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold">
                   0 Harmful / {proposed.gd_count} Ground-Truth
                 </span>
@@ -464,7 +464,7 @@ export default function SingleQueryResults({ breakdown }: Props) {
                           </span>
                         </div>
                         <span className="px-2 py-0.5 rounded text-[9px] font-mono font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 shrink-0">
-                          ✓ VERIFIED SAFE
+                          ✓ NOT FLAGGED
                         </span>
                       </div>
 

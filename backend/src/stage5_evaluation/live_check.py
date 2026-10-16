@@ -14,7 +14,7 @@ def extract_decision(answer: str) -> str:
 
 
 def pubmedqa_reference(source: Dict[str, Any]) -> str:
-    """Chapter 3 reference evidence: the query's PubMedQA context, long answer and reference label."""
+    """Reference evidence: the query's PubMedQA context, long answer and reference label."""
     return (f"Context: {source.get('text', '')}\n\nConclusion: {source.get('long_answer') or ''}\n\n"
             f"Reference answer: {source.get('final_decision') or ''}")
 

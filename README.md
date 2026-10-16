@@ -1,4 +1,4 @@
-# SafeMed AI: A Pre-Reranking Cross-Encoder Filter for Reducing Harmful Document Exposure in Biomedical RAG
+# SafeMedAI: A Pre-Reranking Cross-Encoder Filter for Reducing Harmful Document Exposure in Biomedical RAG
 
 > **Group 7 Thesis Codebase & Prototype**
 > Polytechnic University of the Philippines — College of Computer and Information Sciences

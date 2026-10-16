@@ -18,7 +18,7 @@ _SECTION_LABEL = re.compile(
     re.IGNORECASE,
 )
 
-MAX_LENGTH = 256
+MAX_LENGTH = 512  # measured: 94.0% of (query, abstract) pairs fit (scripts/measure_lengths.py)
 
 Scorer = Callable[[str, Sequence[str]], np.ndarray]
 
@@ -99,12 +99,17 @@ class HarmfulDocumentFilter:
         import torch
         from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
+        from src.stage2_filter.own_cross_encoder import SafeMedCrossEncoder, is_own_cross_encoder
+
         config_file = os.path.join(model_path, "filter_config.json")
         if os.path.isfile(config_file):
             with open(config_file, "r", encoding="utf-8") as f:
                 self.config = json.load(f)
         self.tokenizer = AutoTokenizer.from_pretrained(model_path)
-        self.model = AutoModelForSequenceClassification.from_pretrained(model_path).eval()
+        if is_own_cross_encoder(model_path):
+            self.model = SafeMedCrossEncoder.from_pretrained(model_path).eval()
+        else:  # standard Hugging Face sequence-classification models
+            self.model = AutoModelForSequenceClassification.from_pretrained(model_path).eval()
         self.label_index = resolve_label_index(self.model.config.id2label)
         self.max_length = int(self.config.get("max_length", MAX_LENGTH))
         self._torch = torch
@@ -116,14 +121,14 @@ class HarmfulDocumentFilter:
         rows = []
         for i in range(0, len(texts), self.batch_size):
             batch = list(texts[i:i + self.batch_size])
-            enc = self.tokenizer([query] * len(batch), batch, truncation=True, max_length=self.max_length,
+            enc = self.tokenizer([query] * len(batch), batch, truncation="only_second", max_length=self.max_length,
                                  padding=True, return_tensors="pt")
             with torch.no_grad():
                 rows.append(torch.softmax(self.model(**enc).logits, dim=-1).cpu().numpy())
         return np.concatenate(rows) if rows else np.zeros((0, 3))
 
     def classify(self, query: str, candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Scores every candidate and marks it blocked when P(HD) > tau_safe (Chapter 3: "exceeds the threshold")."""
+        """Scores every candidate and marks it blocked when P(HD) > tau_safe."""
         texts = [normalize_document_text(c.get("text", "")) for c in candidates]
         probs = self._score(query, texts) if texts else np.zeros((0, 3))
         idx = self.label_index

@@ -13,7 +13,7 @@ load_dotenv()
 DEFAULT_MODEL = "gpt-4o-mini"
 
 SYSTEM_PROMPT = (
-    "You are SafeMed AI, a clinical search assistant. Synthesize a concise, "
+    "You are SafeMedAI, a clinical search assistant. Synthesize a concise, "
     "evidence-based Clinical Response Summary to the user's query.\n"
     "RULES:\n"
     "1. You MUST begin your response with exactly 'Decision: yes', 'Decision: no', or 'Decision: maybe'.\n"
@@ -66,7 +66,7 @@ class AnswerGenerator:
     def generate_answer(self, query: str, top_documents: List[Dict[str, Any]]) -> str:
         """Answers the query from the top-5 documents only (temperature 0, max 200 tokens)."""
         if not top_documents:
-            return "No supporting clinical literature found for this query in the verified database."
+            return "No supporting clinical literature found for this query in the searched corpus."
 
         context = "\n\n".join(
             f"Source [{i + 1}] ({doc.get('title', 'Unknown')}):\n{doc.get('text', '')}"

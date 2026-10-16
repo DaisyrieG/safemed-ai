@@ -1,4 +1,4 @@
-"""Measures the current Stage 2 filter on the old (v1) and realistic (v2) synthetic HD for its held-out test questions."""
+"""Measures the current Stage 2 filter on the template-based and realistic synthetic HD for its held-out test questions."""
 
 import argparse
 import json

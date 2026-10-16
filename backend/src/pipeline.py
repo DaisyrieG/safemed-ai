@@ -1,4 +1,4 @@
-"""SafeMed AI pipeline: Stages 1 to 4 of the Chapter 3 system architecture."""
+"""SafeMedAI pipeline: Stages 1 to 4."""
 
 from typing import Any, Dict, List, Optional
 import json
@@ -222,7 +222,7 @@ class SafeMedPipeline:
                     "category": _category(info),
                     "status": ("BLOCKED BY STAGE 2 FILTER" if info.get("is_blocked") else "EXPOSED EVIDENCE")
                     if is_control else
-                    ("REINSTATED BY FALLBACK GUARD" if doc.get("reinstated") else "VERIFIED SAFE EVIDENCE"),
+                    ("REINSTATED BY FALLBACK GUARD" if doc.get("reinstated") else "NOT FLAGGED BY STAGE 2 FILTER"),
                     "is_blocked_in_proposed": bool(info.get("is_blocked", False)),
                     "reinstated": bool(doc.get("reinstated", False)),
                     "true_label": info.get("true_label"),
@@ -247,7 +247,7 @@ class SafeMedPipeline:
             }
 
         control = condition(control_top5, True, control_answer, control_claims, "Control (Standard RAG)")
-        proposed = condition(top5, False, answer, claims, "Proposed (SafeMed AI)")
+        proposed = condition(top5, False, answer, claims, "Proposed (SafeMedAI)")
         control["hallucination_risk"] = "Elevated" if control["hd_count"] else ("Low" if control["gd_count"] else "Moderate")
         proposed["hallucination_risk"] = ("Protected" if not proposed["hd_count"] and control["hd_count"]
                                           else "Low" if not proposed["hd_count"] else "Elevated")
@@ -263,8 +263,8 @@ class SafeMedPipeline:
             "control": control,
             "proposed": proposed,
             "hd_exposure_reduction": reduction,
-            "fidelity_status": ("Evidence Protected: Harmful Context Eliminated" if control["hd_count"] and not proposed["hd_count"]
-                                else "Clinically Grounded: 0% Harmful Exposure" if not proposed["hd_count"]
+            "fidelity_status": ("Harmful Documents Removed by the Filter" if control["hd_count"] and not proposed["hd_count"]
+                                else "No Harmful Documents in the Top 5" if not proposed["hd_count"]
                                 else "Review Required: Harmful Document Detected"),
         }
 

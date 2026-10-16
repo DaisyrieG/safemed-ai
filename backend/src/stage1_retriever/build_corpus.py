@@ -58,13 +58,26 @@ def build_corpus(pqaa: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 
 def partition_queries(pqaa: Dict[str, Dict[str, Any]], seed: int = SEED) -> Dict[str, List[str]]:
-    """Non-overlapping train / val / test query sets by seeded simple random sampling."""
+    """Non-overlapping train / val / test query sets by seeded stratified random sampling on the yes/no label:
+    each set keeps the dataset's yes/no proportions (proportional allocation)."""
     eligible = sorted(p for p, item in pqaa.items() if item.get("QUESTION") and item.get("LONG_ANSWER"))
-    drawn = random.Random(seed).sample(eligible, sum(SPLIT_SIZES.values()))
-    splits, start = {}, 0
+    strata: Dict[str, List[str]] = {}
+    for p in eligible:
+        strata.setdefault(pqaa[p].get("final_decision", ""), []).append(p)
+    labels = sorted(strata)
+    rng = random.Random(seed)
+    shuffled = {label: rng.sample(strata[label], len(strata[label])) for label in labels}
+    taken = {label: 0 for label in labels}
+    splits = {}
     for name, size in SPLIT_SIZES.items():
-        splits[name] = drawn[start:start + size]
-        start += size
+        counts = {label: round(size * len(strata[label]) / len(eligible)) for label in labels}
+        counts[labels[0]] += size - sum(counts.values())  # absorb rounding so the set has exactly `size` queries
+        chosen = []
+        for label in labels:
+            chosen += shuffled[label][taken[label]:taken[label] + counts[label]]
+            taken[label] += counts[label]
+        rng.shuffle(chosen)
+        splits[name] = chosen
     return splits
 
 

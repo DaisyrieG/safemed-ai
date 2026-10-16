@@ -1,4 +1,4 @@
-"""Sprint step 1 / Chapter 3 development step 4: LLM annotation of (query, document) pairs."""
+"""LLM annotation of (query, document) pairs with the annotation rubric."""
 
 import argparse
 import gc
@@ -22,7 +22,7 @@ from src.pipeline import PQAA_CORPUS  # noqa: E402
 from src.stage1_retriever.build_corpus import SPLITS_PATH, load_pqaa  # noqa: E402
 from src.stage1_retriever.retriever import BiEncoderRetriever, index_path_for  # noqa: E402
 
-OUTPUT = os.path.join(BACKEND, "data", "annotations", "pqaa_llm_labels.jsonl")
+OUTPUT = os.path.join(BACKEND, "data", "annotations", "pqaa_llm_labels_v3.jsonl")
 RANK_BANDS = [(1, 5), (6, 10), (11, 20), (21, 35), (36, 50)]
 SEED = 42
 N_ANNOT = 1500
@@ -30,7 +30,7 @@ N_ANNOT = 1500
 
 def sample_pairs(retriever, pqaa, splits, rng, n_pairs: int = N_ANNOT):
     """n_pairs candidates stratified by retriever rank: one per train/val query, then a second, different-band
-    candidate for the first queries until n_pairs is reached (Chapter 3: n_annot = 1,500)."""
+    candidate for the first queries until n_pairs is reached (1,500 pairs by default)."""
     queries = [(p, "train") for p in splits["train"]] + [(p, "val") for p in splits["val"]]
     slots = [(i, q, 0) for i, q in enumerate(queries)]
     slots += [(i, queries[i], 2) for i in range(max(0, n_pairs - len(queries)))]
@@ -87,9 +87,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--limit", type=int, default=0, help="label only the first N pairs (quick test)")
     parser.add_argument("--openai", action="store_true",
-                        help="label with GPT-4o-mini via OPENAI_API_KEY (Chapter 3 labeller), ignoring SAFEMED_LABELER_*")
+                        help="label with GPT-4o-mini via OPENAI_API_KEY (the study's labelling model), ignoring SAFEMED_LABELER_*")
     parser.add_argument("--output", default=OUTPUT, help="labels JSONL (resumed if it exists)")
-    parser.add_argument("--pairs", type=int, default=N_ANNOT, help=f"pairs to sample (default {N_ANNOT}, Chapter 3)")
+    parser.add_argument("--pairs", type=int, default=N_ANNOT, help=f"pairs to sample (default {N_ANNOT})")
     parser.add_argument("--batch-size", type=int, default=10, help="pairs per request (default 10)")
     parser.add_argument("--pace", type=float, default=40.0,
                         help="minimum seconds between requests, to stay under the tokens-per-minute limit")

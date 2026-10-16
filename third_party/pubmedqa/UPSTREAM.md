@@ -10,4 +10,4 @@ Licensed under the MIT License (see `LICENSE` in this folder, kept unchanged).
 Files are unmodified. The upstream repository does not contain the large
 `ori_pqaa.json` (pqa_artificial) or `ori_pqau.json` (pqa_unlabeled) files; per its
 README they are downloaded separately from Google Drive. Place them in
-`backend/data/raw/` or `experiments/data/raw/` (git-ignored) for the SafeMed AI evaluation.
+`backend/data/raw/` or `experiments/data/raw/` (git-ignored) for the SafeMedAI evaluation.

@@ -1,1 +1,1 @@
-"""API package for SafeMed AI backend."""
+"""API package for SafeMedAI backend."""

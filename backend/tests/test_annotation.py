@@ -24,14 +24,28 @@ def test_confusion_matrix_report():
 def test_labeller_batches_pairs_and_sends_rubric_and_reference():
     calls = []
     reply = json.dumps({"labels": [{"pair": 1, "label": "harmful", "rationale": "contradicts"},
-                                   {"pair": 2, "label": "ground_truth", "rationale": "supports"}]})
+                                   {"pair": 2, "label": "ground_truth", "rationale": "supports",
+                                    "evidence": "Aspirin helped patients in a large trial."}]})
     pairs = [{"query": "Does aspirin help?", "reference_answer": "yes", "text": "Aspirin never helps."},
-             {"query": "Does aspirin help?", "reference_answer": "yes", "text": "Aspirin helped in a trial."}]
+             {"query": "Does aspirin help?", "reference_answer": "yes",
+              "text": "Background. Aspirin helped patients in a large trial. More."}]
     out = label_pairs(pairs, client=fake_llm_client(calls, reply=reply), batch_size=10)
     assert [o["llm_label"] for o in out] == ["harmful", "ground_truth"]
+    assert [o["evidence_found"] for o in out] == [None, True]
     assert len(calls) == 1
     assert "codebook" in calls[0]["messages"][0]["content"]
     assert "Correct answer (reference): yes" in calls[0]["messages"][1]["content"]
+
+
+def test_labeller_asks_again_when_a_gd_quote_is_not_in_the_document():
+    calls = []
+    reply = json.dumps({"labels": [{"pair": 1, "label": "ground_truth", "rationale": "supports",
+                                    "evidence": "hs-CRP is irrelevant for diagnosing endometriosis."}]})
+    pairs = [{"query": "Is hs-CRP irrelevant?", "reference_answer": "yes",
+              "text": "Uterine biopsies and progesterone in healthy women."}]
+    out = label_pairs(pairs, client=fake_llm_client(calls, reply=reply), max_retries=2)
+    assert len(calls) == 3  # first try + 2 retries
+    assert out[0]["llm_label"] == "ground_truth" and out[0]["evidence_found"] is False  # kept, flagged for review
 
 
 def test_labeller_rejects_an_invalid_label():

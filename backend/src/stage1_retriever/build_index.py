@@ -1,4 +1,4 @@
-"""Development phase, step 1 (Chapter 3): embed the pooled corpus once and store a FAISS index."""
+"""Embeds the pooled corpus once and stores it as a FAISS index."""
 
 import argparse
 import json

@@ -1,4 +1,4 @@
-"""SafeMed AI web API: runs a question through Stages 1-4."""
+"""SafeMedAI web API: runs a question through Stages 1-4."""
 
 import sys
 import os
@@ -35,10 +35,10 @@ from src.stage5_evaluation.judge import ClaimJudge
 from src.stage5_evaluation.live_check import check_query, extract_decision
 
 app = FastAPI(
-    title="SafeMed AI - Verified Clinical Search Assistant",
+    title="SafeMedAI - Harmful-Document Filtering for Biomedical Question Answering",
     description=(
-        "Clinical decision-support API utilizing a 4-Stage Modular RAG Pipeline with a "
-        "Pre-Reranking Cross-Encoder Safety Filter to eliminate harmful literature exposure."
+        "Research prototype API utilizing a 4-Stage Modular RAG Pipeline with a "
+        "Pre-Reranking Cross-Encoder Safety Filter to reduce harmful document exposure."
     ),
     version="2.0.0",
 )
@@ -135,7 +135,7 @@ def current_sample_cases() -> List[Dict[str, str]]:
 @app.get("/", summary="Root Index")
 def root_index():
     return {
-        "service": "SafeMed AI - Verified Clinical Search Assistant",
+        "service": "SafeMedAI - Harmful-Document Filtering for Biomedical Question Answering",
         "status": "online",
         "docs_url": "/docs",
         "endpoints": {
@@ -171,7 +171,7 @@ def health_check():
         pipeline = get_pipeline()
         return {
             "status": "healthy",
-            "service": "SafeMed AI",
+            "service": "SafeMedAI",
             "pipeline": "4-Stage Modular RAG",
             "stage_1_retriever": pipeline.retriever.model_name,
             "stage_2_filter": {
@@ -208,7 +208,7 @@ def _float_or_none(value):
         return None
 
 
-NOT_BIOMEDICAL = ("SafeMed AI only answers biomedical and health questions (medicine, diseases, treatments, "
+NOT_BIOMEDICAL = ("SafeMedAI only answers biomedical and health questions (medicine, diseases, treatments, "
                   "drugs, biology). Please ask a biomedical question.")
 _domain_cache: Dict[str, bool] = {}
 

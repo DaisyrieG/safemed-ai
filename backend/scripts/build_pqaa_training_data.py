@@ -1,4 +1,4 @@
-"""Chapter 3 development step 5 input: filter training/validation pairs from the pqa_artificial training and validation queries.
+"""Builds the filter's training and validation pairs from the pqa_artificial training and validation queries.
 
   MD / GD / HD   the LLM (or human) labels of the annotated candidates (scripts/annotate_dataset.py)
   GD             each query's own PubMedQA context, its reference evidence by definition
@@ -16,7 +16,7 @@ sys.path.insert(0, BACKEND)
 
 from src.stage1_retriever.build_corpus import SPLITS_PATH, load_pqaa  # noqa: E402
 
-LABELS = os.path.join(BACKEND, "data", "annotations", "pqaa_llm_labels.jsonl")
+LABELS = os.path.join(BACKEND, "data", "annotations", "pqaa_llm_labels_v3.jsonl")
 OUT_DIR = os.path.join(BACKEND, "data", "annotations")
 VALID = {"ground_truth", "mediocre", "harmful"}
 
@@ -72,7 +72,7 @@ def main():
               f"sources {dict(Counter(r['label_source'].split(':')[0] for r in items))} -> {path}")
     if not any(r["label"] == "harmful" for r in rows["train"]):
         print("\nNo harmful pairs in train: the filter cannot learn the HD class. Add --synthetic HD for the "
-              "training queries and report it as a deviation (Chapter 3, Sources of Data).")
+              "training queries and report it as a deviation.")
 
 
 if __name__ == "__main__":

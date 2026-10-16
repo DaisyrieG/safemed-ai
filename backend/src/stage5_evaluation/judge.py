@@ -1,4 +1,4 @@
-"""Stage 5: hallucination judge (Chapter 3, Hallucination Scoring Protocol, parts 1 to 3)."""
+"""Stage 5: hallucination judge (claim extraction, claim verification, answer-level flag)."""
 
 import json
 import os

@@ -1,7 +1,7 @@
 """Stage 1, optional corpus source: live PubMed search through NCBI E-utilities (ESearch + EFetch).
 
 Selected with SAFEMED_CORPUS=live_pubmed. Returns the same candidate dicts as BiEncoderRetriever, so the
-filter, reranker and generator run unchanged. Not part of the Chapter 3 experiment, whose corpus is the
+filter, reranker and generator run unchanged. Not used in the benchmark experiment, whose corpus is the
 pooled pqa_artificial abstracts.
 """
 

@@ -71,7 +71,7 @@ export default function Workspace() {
       res = await executeClinicalQuery(q, id, false)
       setResponse(res)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not reach the SafeMed AI backend on port 8000.')
+      setError(err instanceof Error ? err.message : 'Could not reach the SafeMedAI backend on port 8000.')
       return
     } finally {
       setLoading(false)
@@ -161,7 +161,7 @@ export default function Workspace() {
               </div>
               <h1 className="mt-4 text-2xl font-semibold tracking-tight">Ask a biomedical question</h1>
               <p className="mt-2 text-sm text-muted-foreground leading-relaxed">
-                SafeMed AI retrieves PubMed abstracts, removes documents that look relevant but point to the wrong answer,
+                SafeMedAI retrieves PubMed abstracts, removes documents that look relevant but point to the wrong answer,
                 and writes a cited answer. Each answer is then checked for hallucination, with and without the filter.
               </p>
               <p className="mt-3 text-[12px] text-muted-foreground/80 leading-relaxed">

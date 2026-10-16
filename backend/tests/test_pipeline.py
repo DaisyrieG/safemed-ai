@@ -1,4 +1,4 @@
-"""Tests for each pipeline stage and the Chapter 3 mechanics."""
+"""Tests for each pipeline stage."""
 
 import json
 

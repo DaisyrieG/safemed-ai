@@ -111,7 +111,7 @@ export default function HallucinationCard({ check, error, controlAnswer }: {
         </span>
       </div>
       <div className="flex flex-col sm:flex-row divide-y sm:divide-y-0 sm:divide-x divide-border">
-        <Column title="With the safety filter (SafeMed AI)" check={check.proposed} referenceAnswer={check.reference_answer} />
+        <Column title="With the safety filter (SafeMedAI)" check={check.proposed} referenceAnswer={check.reference_answer} />
         <Column title="Without the filter (standard RAG)" check={check.control} answer={controlAnswer} referenceAnswer={check.reference_answer} />
       </div>
     </div>

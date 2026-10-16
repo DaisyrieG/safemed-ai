@@ -1,4 +1,4 @@
-# Handoff: SafeMed AI thesis sprint
+# Handoff: SafeMedAI thesis sprint
 
 Last updated: Oct 6, 2026, 7:20 AM. **Tool defense: Oct 8, 2026. Everything ready by Oct 8, 5:00 AM.**
 

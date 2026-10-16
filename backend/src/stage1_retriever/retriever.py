@@ -80,7 +80,7 @@ class BiEncoderRetriever:
         top_k: Optional[int] = None,
         exclude_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        """Returns the top-k candidates (default 50, Chapter 3), each with its retrieval_score."""
+        """Returns the top-k candidates (default 50), each with its retrieval_score."""
         k = top_k or self.top_k
         if not self.corpus:
             return []

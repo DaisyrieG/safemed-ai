@@ -10,6 +10,7 @@ from typing import Dict, List, Optional, Sequence
 import numpy as np
 
 from src.stage2_filter.cross_encoder_filter import MAX_LENGTH, normalize_document_text
+from src.stage2_filter.own_cross_encoder import BASE_MODEL
 
 LABELS = ["ground_truth", "mediocre", "harmful"]
 LABEL2ID = {name: i for i, name in enumerate(LABELS)}
@@ -46,7 +47,7 @@ def class_weights(labels: Sequence[int]) -> List[float]:
 
 
 def choose_tau(p_hd: np.ndarray, labels: np.ndarray, max_gd_block: Optional[float] = None) -> Dict[str, float]:
-    """Chapter 3: the tau that maximises the HD F1 on validation (ties go to the higher tau).
+    """The tau that maximises the HD F1 on validation (ties go to the higher tau).
 
     max_gd_block optionally restricts the search to taus that block at most that share of GD documents."""
     is_hd, is_gd = labels == HARMFUL_ID, labels == GD_ID
@@ -103,7 +104,7 @@ def predict(model, tokenizer, pairs, batch_size: int, device, max_length: int = 
     with torch.no_grad():
         for i in range(0, len(pairs), batch_size):
             batch = pairs[i:i + batch_size]
-            enc = tokenizer([p["query"] for p in batch], [p["text"] for p in batch], truncation=True,
+            enc = tokenizer([p["query"] for p in batch], [p["text"] for p in batch], truncation="only_second",
                             max_length=max_length, padding=True, return_tensors="pt").to(device)
             chunks.append(torch.softmax(model(**enc).logits, dim=-1).cpu().numpy())
     return np.concatenate(chunks) if chunks else np.zeros((0, len(LABELS)))
@@ -114,7 +115,7 @@ def train(
     val_data_path: str,
     output_dir: str,
     test_data_path: Optional[str] = None,
-    base_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2",
+    base_model: str = BASE_MODEL,
     epochs: int = 3,
     batch_size: int = 16,
     lr: float = 2e-5,
@@ -123,7 +124,9 @@ def train(
     max_length: int = MAX_LENGTH,
 ) -> Dict:
     import torch
-    from transformers import AutoModelForSequenceClassification, AutoTokenizer, get_linear_schedule_with_warmup
+    from transformers import AutoTokenizer, get_linear_schedule_with_warmup
+
+    from src.stage2_filter.own_cross_encoder import SafeMedCrossEncoder
 
     random.seed(seed)
     np.random.seed(seed)
@@ -135,13 +138,7 @@ def train(
     print(f"Pairs: train {len(train_pairs)}, val {len(val_pairs)}, test {len(test_pairs)} | device {device}")
 
     tokenizer = AutoTokenizer.from_pretrained(base_model)
-    model = AutoModelForSequenceClassification.from_pretrained(
-        base_model,
-        num_labels=len(LABELS),
-        id2label={i: name for i, name in enumerate(LABELS)},
-        label2id=LABEL2ID,
-        ignore_mismatched_sizes=True,
-    ).to(device)
+    model = SafeMedCrossEncoder.from_base(base_model, LABELS).to(device)
 
     weights = torch.tensor(class_weights([p["label"] for p in train_pairs]), dtype=torch.float, device=device)
     loss_fn = torch.nn.CrossEntropyLoss(weight=weights)
@@ -157,7 +154,7 @@ def train(
         started, total = time.time(), 0.0
         for i in range(0, len(train_pairs), batch_size):
             batch = train_pairs[i:i + batch_size]
-            enc = tokenizer([p["query"] for p in batch], [p["text"] for p in batch], truncation=True,
+            enc = tokenizer([p["query"] for p in batch], [p["text"] for p in batch], truncation="only_second",
                             max_length=max_length, padding=True, return_tensors="pt").to(device)
             labels = torch.tensor([p["label"] for p in batch], device=device)
             loss = loss_fn(model(**enc).logits, labels)
@@ -176,7 +173,7 @@ def train(
             model.save_pretrained(output_dir)
             tokenizer.save_pretrained(output_dir)
 
-    model = AutoModelForSequenceClassification.from_pretrained(output_dir).to(device)
+    model = SafeMedCrossEncoder.from_pretrained(output_dir).to(device)
     val_probs = predict(model, tokenizer, val_pairs, batch_size * 2, device, max_length)
     tau = choose_tau(val_probs[:, HARMFUL_ID], val_labels, max_gd_block)
     report = {
@@ -216,11 +213,13 @@ def retune_tau(model_dir: str, val_data_path: str, test_data_path: Optional[str]
     """Re-selects tau for an already trained filter with the current rule; the old config is kept as a backup."""
     import shutil
     import torch
-    from transformers import AutoModelForSequenceClassification, AutoTokenizer
+    from transformers import AutoTokenizer
+
+    from src.stage2_filter.own_cross_encoder import SafeMedCrossEncoder
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     tokenizer = AutoTokenizer.from_pretrained(model_dir)
-    model = AutoModelForSequenceClassification.from_pretrained(model_dir).to(device)
+    model = SafeMedCrossEncoder.from_pretrained(model_dir).to(device)
     config_path = os.path.join(model_dir, "filter_config.json")
     with open(config_path, "r", encoding="utf-8") as f:
         report = json.load(f)
@@ -254,7 +253,7 @@ def retune_tau(model_dir: str, val_data_path: str, test_data_path: Optional[str]
 
 def train_seeds(train_data_path: str, val_data_path: str, output_dir: str, seeds: Sequence[int],
                 test_data_path: Optional[str] = None, **kwargs) -> Dict:
-    """Chapter 3: fine-tunes once per seed, keeps the seed with the best validation HD F1, reports filter stability."""
+    """Fine-tunes once per seed, keeps the seed with the best validation HD F1, reports filter stability."""
     import shutil
 
     runs = []
@@ -298,16 +297,16 @@ def main() -> None:
     parser.add_argument("--val", required=True)
     parser.add_argument("--test")
     parser.add_argument("--output-dir", default="models/safemed_filter")
-    parser.add_argument("--base-model", default="cross-encoder/ms-marco-MiniLM-L-6-v2",
-                        help="e.g. microsoft/BiomedNLP-BiomedBERT-base-uncased-abstract-fulltext (larger, needs a GPU)")
+    parser.add_argument("--base-model", default=BASE_MODEL,
+                        help="plain pretrained encoder under our cross-encoder (default: MiniLM, Wang et al., 2020)")
     parser.add_argument("--epochs", type=int, default=3)
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--lr", type=float, default=2e-5)
     parser.add_argument("--max-gd-block", type=float, default=None,
-                        help="optional cap on the GD block rate when choosing tau (not in Chapter 3; off by default)")
+                        help="optional cap on the GD block rate when choosing tau (optional; off by default)")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--max-length", type=int, default=MAX_LENGTH, help=f"tokens for query + document (default {MAX_LENGTH})")
-    parser.add_argument("--seeds", type=int, nargs="+", help="train once per seed (Chapter 3: three seeds), e.g. --seeds 42 43 44")
+    parser.add_argument("--seeds", type=int, nargs="+", help="train once per seed (three seeds in the study), e.g. --seeds 42 43 44")
     parser.add_argument("--retune-only", action="store_true",
                         help="do not train; re-select tau for the filter already in --output-dir")
     args = parser.parse_args()

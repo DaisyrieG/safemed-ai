@@ -1,4 +1,4 @@
-"""OpenAI-compatible chat client shared by the generator (Stage 4), the judge (Stage 5)"""
+"""OpenAI-compatible chat client shared by the generator (Stage 4), the judge (Stage 5) and the LLM labeller."""
 
 import random
 import time

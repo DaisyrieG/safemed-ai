@@ -82,7 +82,7 @@ export default function Layout() {
               <IconShield size={18} />
             </div>
             <div className="leading-tight">
-              <div className="font-semibold text-[15px] tracking-tight">SafeMed AI</div>
+              <div className="font-semibold text-[15px] tracking-tight">SafeMedAI</div>
               <div className="text-[11px] text-muted-foreground hidden sm:block">Biomedical RAG with a pre-reranking safety filter</div>
             </div>
           </div>

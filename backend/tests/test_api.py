@@ -1,4 +1,4 @@
-"""Tests for the SafeMed AI REST API, over the test pipeline (fixture corpus, oracle filter, fake LLM)."""
+"""Tests for the SafeMedAI REST API, over the test pipeline (fixture corpus, oracle filter, fake LLM)."""
 
 import json
 import types
@@ -37,7 +37,7 @@ def client(make_pipeline, monkeypatch):
 def test_root_endpoint(client):
     response = client.get("/")
     assert response.status_code == 200
-    assert "SafeMed AI" in response.json()["service"]
+    assert "SafeMedAI" in response.json()["service"]
 
 
 def test_health_endpoint(client):

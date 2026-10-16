@@ -1,10 +1,10 @@
-"""Stage 5: the experimental run (Chapter 3, Data Gathering Procedure steps 7 to 12).
+"""Stage 5: the benchmark experiment comparing the control and treatment conditions.
 
 Phases, each resumable and written to --output-dir:
-  generate     both conditions for every test query (step 7)
-  judge        answers coded, stripped of their condition and judged in random order (steps 8-9)
-  reliability  judge re-scoring, answer regeneration and filter-seed stability (step 11)
-  analyze      outcome measures and the pre-specified Wilcoxon tests (step 12)
+  generate     both conditions for every test query
+  judge        answers coded, stripped of their condition and judged in random order
+  reliability  judge re-scoring, answer regeneration and filter-seed stability
+  analyze      outcome measures and the pre-specified tests of H1-H4: McNemar mid-p and a paired permutation test
 """
 
 import argparse
@@ -23,11 +23,9 @@ from src.stage4_generator.llm_client import chat_completion
 from src.stage5_evaluation.judge import ClaimJudge
 from src.stage5_evaluation.live_check import check_answer, extract_decision
 from src.stage5_evaluation.metrics import filter_metrics
-from src.stage5_evaluation.statistical_tests import wilcoxon_one_sample, wilcoxon_paired
+from src.stage5_evaluation.statistical_tests import mcnemar_midp, newcombe_paired_ci, paired_permutation_test
 
 BACKEND = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-H2_MARGIN = 0.05
-H4_MARGIN = 0.10
 CONDITIONS = ("control", "treatment")
 TRACES = "benchmark_traces.jsonl"
 BLINDING = "blinding_key.json"
@@ -84,8 +82,8 @@ def load_pair_labels(path: Optional[str]) -> Dict[Tuple[str, str], str]:
 
 
 def reference_evidence(rec: Dict[str, str], docs: List[Dict[str, Any]]) -> str:
-    """The query's PubMedQA context, long answer and reference label, plus every non-harmful (GD or MD)
-    document in the answer's own context: a claim drawn from real retrieved literature is grounded."""
+    """Reference evidence: the query's PubMedQA context, long answer and reference label, plus the
+    documents labelled GD in the answer's own context."""
     parts = [f"Context: {rec['context']}", f"Conclusion: {rec['long_answer']}", f"Reference answer: {rec['final_decision']}"]
     parts += [f"Retrieved document {i}: {d.get('text', '')}" for i, d in enumerate(docs, 1)]
     return "\n\n".join(parts)
@@ -122,7 +120,7 @@ def _doc(d: Dict[str, Any], gold: str, **extra) -> Dict[str, Any]:
 
 
 def generate(pipe: SafeMedPipeline, queries: List[Dict[str, str]], label, out_dir: str, log_interval: int) -> List[Dict]:
-    """Step 7: retrieve once, run both branches from the same 50 candidates, log every stage boundary (O1-O4)."""
+    """Retrieves once, runs both conditions from the same 50 candidates and logs every stage boundary (O1-O4)."""
     path = os.path.join(out_dir, TRACES)
     done = {r["pubid"] for r in read_jsonl(path)}
     todo = [q for q in queries if q["pubid"] not in done]
@@ -155,7 +153,7 @@ def generate(pipe: SafeMedPipeline, queries: List[Dict[str, str]], label, out_di
 
 
 def blind(traces: List[Dict], out_dir: str, seed: int) -> Dict[str, Any]:
-    """Step 8: one random code per answer; the judge sees codes in random order and never the condition."""
+    """Blinding: one random code per answer; the judge sees codes in random order and never the condition."""
     path = os.path.join(out_dir, BLINDING)
     blinding = {"key": {}, "order": []}
     if os.path.exists(path):
@@ -185,13 +183,13 @@ def _context(top5: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 def judge_answer(judge: ClaimJudge, rec: Dict[str, str], cond: Dict[str, Any]) -> Dict[str, Any]:
     context = _context(cond["top5"])
-    trusted = [d for d in context if d["true_label"] != "harmful"]
+    trusted = [d for d in context if d["true_label"] == "ground_truth"]  # only GD documents count as reference evidence
     return check_answer(judge, cond["answer"], reference_evidence(rec, trusted), context)
 
 
 def judge_all(judge: ClaimJudge, blinding: Dict, traces: Dict[str, Dict], records: Dict[str, Dict],
               out_dir: str, pace: float, judged_ids: Optional[set] = None) -> Dict[str, Dict]:
-    """Step 9: claims, labels, answer-level flag and the separate harmful-document attribution pass."""
+    """Judges every blinded answer: claims, claim labels, answer-level flag and harmful-document attribution."""
     path = os.path.join(out_dir, JUDGMENTS)
     done = {r["code"]: r for r in read_jsonl(path)}
     todo = [c for c in blinding["order"] if c not in done
@@ -219,7 +217,7 @@ def _kappa(a: List[bool], b: List[bool]) -> Optional[float]:
 
 def reliability(args, pipe: SafeMedPipeline, judge: ClaimJudge, blinding: Dict, judgments: Dict[str, Dict],
                 traces: Dict[str, Dict], records: Dict[str, Dict], out_dir: str) -> Dict[str, Any]:
-    """Step 11: judge consistency (re-scoring), generator stability (regeneration) and filter stability (seeds)."""
+    """Reliability checks: judge consistency (re-scoring), generator stability (regeneration) and filter stability (seeds)."""
     rng = random.Random(args.seed + 1)
     codes = [c for c in blinding["order"] if c in judgments]
     rescore_codes = rng.sample(codes, min(len(codes), round(args.rescore_frac * len(codes))))
@@ -275,15 +273,10 @@ def reliability(args, pipe: SafeMedPipeline, judge: ClaimJudge, blinding: Dict, 
             "filter_stability": filter_stability or "seeds_summary.json not found: train with --seeds 42 43 44"}
 
 
-def _test(result: Dict[str, Any]) -> Dict[str, Any]:
-    """Only the statistics Table 4 reports: N, W, p, mean and median."""
-    return {k: result[k] for k in ("test_type", "statistic", "p_value", "significant", "mean_diff", "median_diff")
-            if k in result} | {"n": result.get("n_pairs", result.get("n_samples"))}
-
-
 def analyze(traces: Dict[str, Dict], blinding: Dict, judgments: Dict[str, Dict], records: Dict[str, Dict],
             args, extra: Dict[str, Any]) -> Dict[str, Any]:
-    """Step 12: per-query outcomes, the pre-specified tests (no multiplicity correction) and descriptive rates."""
+    """Per-query outcomes and the pre-specified tests of H1-H4: McNemar mid-p for the binary outcomes and a
+    paired permutation test for HD@Top-5, all two-sided."""
     by_pair = {(v["pubid"], v["condition"]): c for c, v in blinding["key"].items()}
     per_query, cand_true, cand_pred, cand_prob, cand_query = [], [], [], [], []
     for qi, (pubid, row) in enumerate(sorted(traces.items())):
@@ -307,6 +300,7 @@ def analyze(traces: Dict[str, Dict], blinding: Dict, judgments: Dict[str, Dict],
             q[f"hd_induced_{cond}"] = int(bool(j.get("hd_induced")))
             q[f"ucr_{cond}"] = float(j.get("unsupported_claim_rate", 0.0))
             q[f"correct_{cond}"] = int(j.get("decision") == records[pubid]["final_decision"])
+            q[f"maybe_{cond}"] = int(j.get("decision") == "maybe")
             q[f"judged_{cond}"] = bool(j)
         per_query.append(q)
         for d in o1:
@@ -315,39 +309,71 @@ def analyze(traces: Dict[str, Dict], blinding: Dict, judgments: Dict[str, Dict],
             cand_prob.append(d["p_hd"])
             cand_query.append(qi)
 
-    col = lambda k: [r[k] for r in per_query]
+    col = lambda k, rows: [r[k] for r in rows]
+    judged = [r for r in per_query if r["judged_control"] and r["judged_treatment"]]
+    boot_rng = np.random.default_rng(args.seed)
+    n_perm = getattr(args, "n_permutations", 10000)
+
+    def boot_ci(diff) -> Optional[List[float]]:
+        """95% percentile bootstrap CI of a mean paired difference, resampling queries (Efron & Tibshirani, 1993)."""
+        diff = np.asarray(diff, dtype=float)
+        if len(diff) == 0:
+            return None
+        means = diff[boot_rng.integers(0, len(diff), (args.n_bootstrap, len(diff)))].mean(axis=1)
+        return [round(float(np.percentile(means, 2.5)), 4), round(float(np.percentile(means, 97.5)), 4)]
+
+    def binary(key: str, rows: List[Dict], lower_is_better: bool) -> Dict[str, Any]:
+        """Paired binary outcome: rates, delta p (positive = improvement under treatment) with Newcombe's 95% CI, McNemar mid-p."""
+        c, t = col(f"{key}_control", rows), col(f"{key}_treatment", rows)
+        first, second = (c, t) if lower_is_better else (t, c)
+        diff = np.subtract(first, second)
+        return {**mcnemar_midp(c, t), "delta_p_improvement": round(float(np.mean(diff)), 4) if len(diff) else None,
+                "delta_p_ci_95": newcombe_paired_ci(first, second)}
+
+    def continuous(key: str, rows: List[Dict]) -> Dict[str, Any]:
+        """Paired continuous outcome: means, SDs, d = control - treatment with bootstrap CI, paired permutation test."""
+        c, t = col(f"{key}_control", rows), col(f"{key}_treatment", rows)
+        return {**paired_permutation_test(c, t, n_permutations=n_perm, seed=args.seed),
+                "mean_diff_ci_95": boot_ci(np.subtract(c, t))}
+
+    improved = lambda r, k: bool(r["significant"] and (r[k] or 0) > 0)
+    h1 = binary("hallucinated", judged, lower_is_better=True)
+    h2_hhd = binary("hd_induced", judged, lower_is_better=True)
+    h2_acc = binary("correct", judged, lower_is_better=False)
+    h3 = continuous("hd_at5", per_query)
+    h4 = binary("hit_at5", per_query, lower_is_better=False)
     hypotheses = {
-        "H1_harmful_density_reduction": {**_test(wilcoxon_paired(col("hd_density_pre"), col("hd_density_post"), alternative="less")),
-                                         "alternative": "post-filter density < pre-filter density"},
-        "H2_ground_truth_retention_loss": {**_test(wilcoxon_one_sample(col("gt_retention_loss"), reference=H2_MARGIN, alternative="less")),
-                                           "alternative": f"median GTRL < {H2_MARGIN}",
-                                           "definition": "GD documents in the 50 candidates blocked by Stage 2 (not reinstated) / GD documents"},
-        "H3_hd_at_top5_shift": {**_test(wilcoxon_paired(col("hd_at5_control"), col("hd_at5_treatment"), alternative="less")),
-                                "alternative": "treatment HD@Top-5 < control HD@Top-5"},
-        "H4_unsupported_claim_rate": {**_test(wilcoxon_one_sample([r["ucr_treatment"] for r in per_query if r["judged_treatment"]],
-                                                                  reference=H4_MARGIN, alternative="less")),
-                                      "alternative": f"median treatment UCR < {H4_MARGIN}"},
+        "H1_hallucination_rate": {**h1, "role": "confirmatory", "predicted": "treatment < control",
+                                  "supported": improved(h1, "delta_p_improvement")},
+        "H2_hd_induced_hallucination_rate": {**h2_hhd, "predicted": "treatment < control"},
+        "H2_answer_accuracy": {**h2_acc, "predicted": "treatment > control"},
+        "H2_supported": improved(h2_hhd, "delta_p_improvement") and improved(h2_acc, "delta_p_improvement"),
+        "H3_hd_at_top5": {**h3, "predicted": "treatment < control", "supported": improved(h3, "mean_diff")},
+        "H4_gd_at_top5_hit5": {**h4, "predicted": "two-sided difference", "supported": h4["significant"]},
+        "Secondary_unsupported_claim_rate": continuous("ucr", judged),
     }
 
-    def rate(key: str, rows: List[Dict]) -> Optional[float]:
-        return round(float(np.mean([r[key] for r in rows])), 4) if rows else None
+    accuracy_by_label = {}
+    for lab in ("yes", "no"):
+        rows = [r for r in judged if records[r["pubid"]]["final_decision"] == lab]
+        accuracy_by_label[lab] = binary("correct", rows, lower_is_better=False)
+    accuracy_by_label["overall"] = h2_acc
+    accuracy_by_label["majority_class_rate_yes"] = round(float(np.mean(
+        [records[r["pubid"]]["final_decision"] == "yes" for r in judged])), 4) if judged else None
 
-    descriptive = {}
+    # "maybe" counts as incorrect in H2; the share of "maybe" answers and the accuracy among yes/no answers
+    # are also reported separately
+    maybe_answers = {}
     for cond in CONDITIONS:
-        judged = [r for r in per_query if r[f"judged_{cond}"]]
-        by_label = {lab: [r for r in judged if records[r["pubid"]]["final_decision"] == lab] for lab in ("yes", "no")}
-        descriptive[cond] = {
-            "n_judged": len(judged),
-            "hallucination_rate": rate(f"hallucinated_{cond}", judged),
-            "hd_induced_hallucination_rate": rate(f"hd_induced_{cond}", judged),
-            "answer_accuracy": rate(f"correct_{cond}", judged),
-            "answer_accuracy_yes": rate(f"correct_{cond}", by_label["yes"]),
-            "answer_accuracy_no": rate(f"correct_{cond}", by_label["no"]),
-            "mean_unsupported_claim_rate": rate(f"ucr_{cond}", judged),
-            "hit_at_5": rate(f"hit_at5_{cond}", per_query),
-            "mean_hd_at_top5": rate(f"hd_at5_{cond}", per_query),
+        decided = [r for r in judged if not r[f"maybe_{cond}"]]
+        maybe_answers[cond] = {
+            "maybe_rate": round(float(np.mean(col(f"maybe_{cond}", judged))), 4) if judged else None,
+            "n_yes_no_answers": len(decided),
+            "accuracy_among_yes_no_answers": round(float(np.mean(col(f"correct_{cond}", decided))), 4) if decided else None,
         }
-    descriptive["majority_class_rate_yes"] = rate("is_yes", [{"is_yes": records[r["pubid"]]["final_decision"] == "yes"} for r in per_query])
+
+    supplementary_stage2 = {k: round(float(np.mean(col(k, per_query))), 4) if per_query else None
+                            for k in ("hd_density_pre", "hd_density_post", "gt_retention_loss")}
 
     sop1 = filter_metrics(cand_true, cand_pred, cand_prob)
     t = np.array([c == "harmful" for c in cand_true])
@@ -375,10 +401,13 @@ def analyze(traces: Dict[str, Dict], blinding: Dict, judgments: Dict[str, Dict],
         "live_run": True,
         "num_queries": len(per_query),
         "alpha": 0.05,
-        "multiplicity_correction": "none (Chapter 3)",
+        "multiplicity_correction": "none (H1 is the only confirmatory hypothesis)",
+        "n_judged_both_conditions": len(judged),
         "SOP1_filter_detection": sop1,
         "Hypotheses": hypotheses,
-        "Descriptive": descriptive,
+        "Answer_accuracy_by_reference_label": accuracy_by_label,
+        "Maybe_answers": maybe_answers,
+        "Supplementary_stage2_means": supplementary_stage2,
         "per_query": per_query,
         **extra,
     }
@@ -396,7 +425,7 @@ def run_benchmark(args) -> Dict[str, Any]:
     def label(pubid: str, doc: Dict[str, Any]) -> str:
         return pair_labels.get((pubid, str(doc.get("id")))) or doc.get("true_label") or "mediocre"
 
-    print(f"\nSafeMed AI benchmark: {source}")
+    print(f"\nSafeMedAI benchmark: {source}")
     print(f"Corpus: {args.corpus} | tau_safe = {pipe.filter.harmful_threshold} | "
           f"generator = {pipe.generator.model} | judge = {judge.model}\n")
 
@@ -426,7 +455,7 @@ def run_benchmark(args) -> Dict[str, Any]:
         "judge_same_as_generator": judge.model == pipe.generator.model,
         "leave_self_out": True,
         "blinded_random_order": True,
-        "claim_reference": "PubMedQA context + LONG_ANSWER + final_decision + non-harmful (GD/MD) documents in the answer's context",
+        "claim_reference": "PubMedQA context + LONG_ANSWER + final_decision + GD documents in the answer's context",
         "files": {k: os.path.relpath(os.path.join(args.output_dir, v), BACKEND)
                   for k, v in (("traces", TRACES), ("blinding_key", BLINDING), ("judgments", JUDGMENTS))},
     }
@@ -443,14 +472,24 @@ def run_benchmark(args) -> Dict[str, Any]:
     with open(out_file, "w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)
 
-    print("\n================ WILCOXON SIGNED-RANK (zero_method='pratt'), no multiplicity correction ================")
-    for name, h in summary["Hypotheses"].items():
-        print(f"{name:34s} N={h['n']:4d}  W={h['statistic']:>12}  p={h['p_value']:.6g}  "
-              f"mean={h['mean_diff']:+.4f}  median={h['median_diff']:+.4f}")
-    for cond in CONDITIONS:
-        d = summary["Descriptive"][cond]
-        print(f"{cond:9s}: hallucination {d['hallucination_rate']} | HD-induced {d['hd_induced_hallucination_rate']} | "
-              f"accuracy {d['answer_accuracy']} | Hit@5 {d['hit_at_5']} | HD@Top-5 {d['mean_hd_at_top5']}")
+    h = summary["Hypotheses"]
+    print("\n================ H1-H4 (two-sided, alpha = 0.05, no multiplicity correction) ================")
+    print(f"Judged in both conditions: {summary['n_judged_both_conditions']} of {summary['num_queries']} queries")
+    for name in ("H1_hallucination_rate", "H2_hd_induced_hallucination_rate", "H2_answer_accuracy", "H4_gd_at_top5_hit5"):
+        r = h[name]
+        print(f"{name:34s} N={r['n']:4d}  control={r['rate_control']}  treatment={r['rate_treatment']}  "
+              f"dp={r['delta_p_improvement']} {r['delta_p_ci_95']}  b={r['b_control_only']} c={r['c_treatment_only']}  "
+              f"p={r['p_value']:.6g}")
+    for name in ("H3_hd_at_top5", "Secondary_unsupported_claim_rate"):
+        r = h[name]
+        print(f"{name:34s} N={r['n']:4d}  control={r['mean_control']}  treatment={r['mean_treatment']}  "
+              f"d={r['mean_diff']} {r['mean_diff_ci_95']}  p={r['p_value']:.6g}")
+    print(f"Supported: H1 {h['H1_hallucination_rate']['supported']} | H2 {h['H2_supported']} | "
+          f"H3 {h['H3_hd_at_top5']['supported']} | H4 {h['H4_gd_at_top5_hit5']['supported']}")
+    for lab in ("yes", "no"):
+        r = summary["Answer_accuracy_by_reference_label"][lab]
+        print(f"Accuracy, reference '{lab}': N={r['n']}  control={r['rate_control']}  treatment={r['rate_treatment']}  "
+              f"p={r['p_value']:.6g}")
     s = summary["SOP1_filter_detection"]
     print(f"SOP1: TPR {s['TPR_Recall']:.3f}  FPR {s['FPR']:.3f}  Precision {s['Precision']:.3f}  F1 {s['F1_score']:.3f}")
     print(f"\nSaved: {os.path.relpath(out_file, BACKEND)}\n")
@@ -468,12 +507,13 @@ def main(argv=None):
     p.add_argument("--phase", default="all", choices=["all", "generate", "judge", "reliability", "analyze"])
     p.add_argument("--allow-same-judge", action="store_true", help="allow judge = generator (recorded as a deviation)")
     p.add_argument("--judge-pace", type=float, default=0.0, help="seconds between judged answers (rate limits)")
-    p.add_argument("--rescore-frac", type=float, default=0.1, help="share of answers re-scored by the judge (step 11)")
-    p.add_argument("--regen-frac", type=float, default=0.1, help="share of queries whose answer is regenerated (step 11)")
+    p.add_argument("--rescore-frac", type=float, default=0.1, help="share of answers re-scored by the judge for the reliability check")
+    p.add_argument("--regen-frac", type=float, default=0.1, help="share of queries whose answer is regenerated for the reliability check")
     p.add_argument("--judge-n", type=int, default=0,
-                   help="judge only the answers of the first N queries (H4 and hallucination rates); H1-H3 use all")
+                   help="judge only the answers of the first N queries (pilots only; the experiment judges all, so leave it out)")
     p.add_argument("--pilot", action="store_true", help="dry run: allow a sample without HD labels (not for reported results)")
-    p.add_argument("--n-bootstrap", type=int, default=2000)
+    p.add_argument("--n-bootstrap", type=int, default=10000, help="bootstrap resamples for CIs (B = 10,000)")
+    p.add_argument("--n-permutations", type=int, default=10000, help="sign flips for the H3 permutation test")
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--log-interval", type=int, default=25)
     args = p.parse_args(argv)

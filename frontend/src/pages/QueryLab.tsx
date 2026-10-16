@@ -125,7 +125,7 @@ export default function QueryLab() {
       setActiveStage(0)
       setQueryError(
         err.message ||
-          'Could not reach SafeMed AI backend. Please verify python src/api/app.py is running on port 8000.'
+          'Could not reach SafeMedAI backend. Please verify python src/api/app.py is running on port 8000.'
       )
     } finally {
       setLoading(false)
@@ -193,7 +193,7 @@ export default function QueryLab() {
           Clinical Evidence Search
         </h1>
         <p className="text-sm sm:text-base text-muted-foreground leading-relaxed">
-          Search peer-reviewed PubMed literature through a 4-Stage Modular RAG Pipeline with automated Pre-Reranking Safety Filtering to eliminate contradictory and misleading evidence.
+          Search PubMed abstracts through a 4-Stage Modular RAG Pipeline with automated Pre-Reranking Safety Filtering to reduce contradictory and misleading evidence.
         </p>
 
         {/* Backend Connectivity Status */}
@@ -342,7 +342,7 @@ export default function QueryLab() {
             <div className="flex items-center gap-2">
               <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-ping" />
               <span className="text-xs font-mono font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">
-                Executing 4-Stage SafeMed AI Protocol
+                Running the 4-Stage SafeMedAI Pipeline
               </span>
             </div>
             <span className="text-xs font-mono text-muted-foreground truncate max-w-xs">
@@ -410,7 +410,7 @@ export default function QueryLab() {
                   ✓ {currentResponse.consensus_status}
                 </span>
                 <span className="text-xs text-muted-foreground font-mono">
-                  Verified Clinical Consensus
+                  AI-Generated Answer
                 </span>
               </div>
 
@@ -536,7 +536,7 @@ export default function QueryLab() {
             {activeTab === 'sources' && (
               <div className="p-5 space-y-3">
                 <p className="text-xs text-muted-foreground font-mono">
-                  These 5 verified passages were selected by the Stage 3 Cross-Encoder Reranker after the Stage 2 Safety Filter purged all harmful/contradictory candidates. Click any document to read the full abstract:
+                  These 5 passages were selected by the Stage 3 Cross-Encoder Reranker after the Stage 2 Safety Filter removed the candidates it flagged as harmful. Click any document to read the full abstract:
                 </p>
 
                 <div className="grid gap-3">
@@ -576,7 +576,7 @@ export default function QueryLab() {
                         </p>
                       </div>
                       <span className="px-2.5 py-1 rounded text-[10px] font-mono bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 shrink-0 font-bold border border-emerald-500/20">
-                        {src.verification_status?.includes('reinstated') ? '↺ REINSTATED' : '✓ VERIFIED SAFE'}
+                        {src.verification_status?.includes('reinstated') ? '↺ REINSTATED' : '✓ NOT FLAGGED'}
                       </span>
                     </button>
                   ))}

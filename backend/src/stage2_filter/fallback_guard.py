@@ -1,4 +1,4 @@
-"""Safety Fallback Guard (Chapter 3, Stage 2)."""
+"""Safety Fallback Guard (Stage 2)."""
 
 from typing import Any, Dict, List, Tuple
 

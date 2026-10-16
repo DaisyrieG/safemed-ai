@@ -1,4 +1,4 @@
-"""Pydantic schemas for the SafeMed AI Verified Clinical Search Assistant API."""
+"""Pydantic schemas for the SafeMedAI API (harmful-document filtering for biomedical question answering)."""
 
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
@@ -55,7 +55,7 @@ class SingleQueryDocument(BaseModel):
 
 
 class SingleQueryConditionMetrics(BaseModel):
-    condition: str = Field(description="'Control (Standard RAG)' or 'Proposed (SafeMed AI)'")
+    condition: str = Field(description="'Control (Standard RAG)' or 'Proposed (SafeMedAI)'")
     answer: str
     top5_documents: List[SingleQueryDocument]
     hd_count: int = Field(description="Count of harmful documents (HD) in Top-5 context")
@@ -77,7 +77,7 @@ class SingleQueryEvaluationBreakdown(BaseModel):
     control: SingleQueryConditionMetrics
     proposed: SingleQueryConditionMetrics
     hd_exposure_reduction: float = Field(description="Control HD@Top-5 minus Proposed HD@Top-5")
-    fidelity_status: str = Field(description="Clinical verification verdict")
+    fidelity_status: str = Field(description="Summary of the filter's effect on the top-5 documents")
 
 
 class ClinicalQueryRequest(BaseModel):

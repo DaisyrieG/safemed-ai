@@ -1,5 +1,5 @@
 /**
- * SafeMed AI API client for the backend at http://127.0.0.1:8000.
+ * SafeMedAI API client for the backend at http://127.0.0.1:8000.
  */
 
 export interface DocumentEvaluationEntry {

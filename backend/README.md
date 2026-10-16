@@ -1,4 +1,4 @@
-# SafeMed AI — Backend
+# SafeMedAI — Backend
 
 See the [root README](../README.md) for the folder layout, setup, the web demo and the experiment commands.
 

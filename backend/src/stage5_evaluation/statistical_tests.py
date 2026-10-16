@@ -1,6 +1,6 @@
-"""Wilcoxon signed-rank tests (Pratt), effect sizes, bootstrap CIs and Holm adjustment."""
+"""Statistical tests for the benchmark: McNemar mid-p, paired permutation test and Newcombe CI, plus the earlier Wilcoxon and Holm helpers."""
 
-from typing import List, Dict, Any, Tuple, Sequence
+from typing import List, Dict, Any, Optional, Tuple, Sequence
 import numpy as np
 from scipy import stats
 
@@ -256,3 +256,85 @@ def paired_continuous_test(control: Sequence[float], treatment: Sequence[float],
         method = "paired sign-flip permutation (Shapiro-Wilk rejected normality)"
     return {**out, "method": method, "shapiro_p": round(shapiro_p, 6), "statistic": round(stat, 4),
             "p_value": round(pval, 6), "significant": bool(pval < alpha)}
+
+
+def mcnemar_midp(control: Sequence[int], treatment: Sequence[int], alpha: float = 0.05) -> Dict[str, Any]:
+    """McNemar mid-p test for paired binary outcomes (McNemar, 1947; Fagerland, Lydersen & Laake, 2013).
+    b = queries with 1 in control only, c = queries with 1 in treatment only. Two-sided."""
+    x1 = np.asarray(control, dtype=int)
+    x2 = np.asarray(treatment, dtype=int)
+    b = int(((x1 == 1) & (x2 == 0)).sum())
+    c = int(((x1 == 0) & (x2 == 1)).sum())
+    n = b + c
+    if n == 0:
+        pval = 1.0
+    else:
+        k = min(b, c)
+        pval = float(min(1.0, 2 * stats.binom.cdf(k, n, 0.5)) - stats.binom.pmf(k, n, 0.5))
+    return {
+        "test_type": "McNemar mid-p (paired binary, two-sided)",
+        "n": int(len(x1)),
+        "b_control_only": b,
+        "c_treatment_only": c,
+        "p_value": float(f"{pval:.4g}"),
+        "significant": bool(pval < alpha),
+        "rate_control": round(float(x1.mean()), 4) if len(x1) else None,
+        "rate_treatment": round(float(x2.mean()), 4) if len(x2) else None,
+    }
+
+
+def paired_permutation_test(control: Sequence[float], treatment: Sequence[float], alpha: float = 0.05,
+                            n_permutations: int = 10000, seed: int = 42) -> Dict[str, Any]:
+    """Paired sign-flip permutation test on the mean difference d = control - treatment, two-sided
+    (Ernst, 2004); p = (1 + count) / (B + 1) so it is never zero (Phipson & Smyth, 2010)."""
+    x1 = np.asarray(control, dtype=float)
+    x2 = np.asarray(treatment, dtype=float)
+    d = x1 - x2
+    n = len(d)
+    out = {"test_type": "Paired sign-flip permutation (two-sided)", "n": int(n), "n_permutations": n_permutations,
+           "mean_control": round(float(x1.mean()), 4) if n else None,
+           "sd_control": round(float(x1.std(ddof=1)), 4) if n > 1 else None,
+           "mean_treatment": round(float(x2.mean()), 4) if n else None,
+           "sd_treatment": round(float(x2.std(ddof=1)), 4) if n > 1 else None,
+           "mean_diff": round(float(d.mean()), 4) if n else None}
+    if n == 0 or np.allclose(d, 0):
+        return {**out, "p_value": 1.0, "significant": False}
+    rng = np.random.default_rng(seed)
+    observed = abs(d.mean())
+    flips = rng.choice([-1.0, 1.0], size=(n_permutations, n))
+    perm = np.abs((flips * d).mean(axis=1))
+    pval = float((1 + (perm >= observed - 1e-12).sum()) / (n_permutations + 1))
+    return {**out, "p_value": float(f"{pval:.4g}"), "significant": bool(pval < alpha)}
+
+
+def _wilson(x: int, n: int, z: float = 1.959964) -> Tuple[float, float]:
+    """Wilson score interval for one proportion."""
+    p = x / n
+    d = 1 + z * z / n
+    centre = (p + z * z / (2 * n)) / d
+    half = z * np.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / d
+    return centre - half, centre + half
+
+
+def newcombe_paired_ci(first: Sequence[int], second: Sequence[int]) -> Optional[List[float]]:
+    """95% CI for p(first) - p(second) on paired binary data: Newcombe's square-and-add (hybrid score) interval
+    (Newcombe, 1998), recommended for paired proportions by Fagerland, Lydersen & Laake (2014)."""
+    a = np.asarray(first, dtype=int)
+    b = np.asarray(second, dtype=int)
+    n = len(a)
+    if n == 0:
+        return None
+    n11, n12 = int(((a == 1) & (b == 1)).sum()), int(((a == 1) & (b == 0)).sum())
+    n21, n22 = int(((a == 0) & (b == 1)).sum()), int(((a == 0) & (b == 0)).sum())
+    p1, p2 = (n11 + n12) / n, (n11 + n21) / n
+    l1, u1 = _wilson(n11 + n12, n)
+    l2, u2 = _wilson(n11 + n21, n)
+    num = n11 * n22 - n12 * n21
+    if num > 0:
+        num = max(num - n / 2, 0)
+    den = np.sqrt(float((n11 + n12) * (n21 + n22) * (n11 + n21) * (n12 + n22)))
+    phi = num / den if den else 0.0
+    d = p1 - p2
+    lower = d - np.sqrt(max((p1 - l1) ** 2 - 2 * phi * (p1 - l1) * (u2 - p2) + (u2 - p2) ** 2, 0.0))
+    upper = d + np.sqrt(max((u1 - p1) ** 2 - 2 * phi * (u1 - p1) * (p2 - l2) + (p2 - l2) ** 2, 0.0))
+    return [round(float(lower), 4), round(float(upper), 4)]
