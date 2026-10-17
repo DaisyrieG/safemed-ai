@@ -10,7 +10,7 @@ from src.stage3_reranker.reranker import Reranker
 from src.stage4_generator.generator import AnswerGenerator
 from src.stage4_generator.attribution import attribute_answer
 
-POOL_SIZE = 30
+POOL_SIZE = 50
 TOP_K = 5
 
 _BACKEND = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))

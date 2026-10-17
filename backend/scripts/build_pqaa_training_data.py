@@ -3,6 +3,9 @@
   MD / GD / HD   the LLM (or human) labels of the annotated candidates (scripts/annotate_dataset.py)
   GD             each query's own PubMedQA context, its reference evidence by definition
   HD (optional)  synthetic harmful documents written for these queries (--synthetic), reported as an augmentation
+
+Under codebook v3, HD means a related document that does not give the answer, which retrieval returns often, so the
+default build uses no synthetic documents: they are invented contradictions, a different kind of HD.
 """
 
 import argparse
@@ -71,8 +74,9 @@ def main():
         print(f"{split:5s}: {len(items):5d} pairs  labels {dict(Counter(r['label'] for r in items))}  "
               f"sources {dict(Counter(r['label_source'].split(':')[0] for r in items))} -> {path}")
     if not any(r["label"] == "harmful" for r in rows["train"]):
-        print("\nNo harmful pairs in train: the filter cannot learn the HD class. Add --synthetic HD for the "
-              "training queries and report it as a deviation.")
+        print("\nNo harmful pairs in train: the filter cannot learn the HD class. Check the labels first (under "
+              "codebook v3 most retrieved documents are HD); --synthetic adds invented contradictions, a different "
+              "kind of HD, and must be reported as a deviation.")
 
 
 if __name__ == "__main__":

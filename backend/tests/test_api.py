@@ -44,7 +44,7 @@ def test_health_endpoint(client):
     data = client.get("/api/health").json()
     assert data["status"] == "healthy"
     assert "stage_1_retriever" in data
-    assert data["stage_2_filter"]["cutoff_k"] == 30
+    assert data["stage_2_filter"]["cutoff_k"] == 50
 
 
 def test_sample_cases_endpoint(client):

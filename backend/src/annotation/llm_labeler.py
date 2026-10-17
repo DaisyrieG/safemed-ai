@@ -1,4 +1,12 @@
-"""LLM labels (GD / MD / HD) for (query, document) pairs, with a quote check for GD."""
+"""LLM labels (GD / MD / HD) for (query, document) pairs.
+
+The model answers the codebook's questions for one pair at a time (what the query and the document are about, which
+of condition / exposure / outcome they share, and a quote for GD); the code then applies the codebook's steps in
+order, so the label always follows the codebook's rules:
+  Step 1  a quote found in the document, on the same exposure and outcome, in the same direction  -> GD
+  Step 2  otherwise, any shared condition, exposure or outcome (or a quote showing another finding) -> HD
+  Step 3  otherwise                                                                                 -> MD
+"""
 
 import json
 import os
@@ -12,12 +20,14 @@ from src.stage4_generator.llm_client import chat_completion, make_client
 load_dotenv()
 
 LABELS = {"ground_truth", "harmful", "mediocre"}
-ALIASES = {"gd": "ground_truth", "hd": "harmful", "md": "mediocre", "ground truth": "ground_truth"}
 RUBRIC_PATH = os.path.join(os.path.dirname(__file__), "rubric_v3.md")
+SHARED_KEYS = ("shares_condition", "shares_exposure", "shares_outcome")
+GD_KEYS = ("evidence_same_exposure", "evidence_same_outcome", "same_direction")
+BOOLEAN_KEYS = SHARED_KEYS + GD_KEYS
 
 
 class LabelerUnavailableError(RuntimeError):
-    """Raised when the labelling model cannot be called or returns an invalid label."""
+    """Raised when the labelling model cannot be called or returns no valid answer."""
 
 
 def make_labeler_client(model: Optional[str] = None):
@@ -36,13 +46,20 @@ def _system_prompt(rubric_path: str) -> str:
         rubric = f.read()
     return (
         f"You are an expert biomedical annotator following this codebook:\n{rubric}\n"
-        "You will receive numbered (query, document) pairs. For each pair, decide whether the document is "
-        "'ground_truth', 'harmful', or 'mediocre' FOR THAT QUERY, judged against the correct answer given "
-        "with the query. For ground_truth, 'evidence' must be one full sentence copied exactly from the DOCUMENT "
-        "(not from the reference answer, no '...'); for the other labels, leave 'evidence' empty. Reply in JSON only: "
-        '{"labels": [{"pair": <number>, "label": "<category>", "evidence": "<sentence or empty>", '
-        '"rationale": "<at most 15 words>"}]} '
-        "with one entry per pair, in order. <category> must be exactly one of: ground_truth, harmful, mediocre."
+        "Answer the codebook's questions for the (query, document) pair. Reply in JSON only:\n"
+        '{"q_condition": "...", "q_exposure": "...", "q_outcome": "...", '
+        '"d_condition": "...", "d_exposure": "...", "d_outcome": "...", '
+        '"evidence": "<one full sentence copied exactly from the DOCUMENT that reports the reference finding, or empty>", '
+        '"evidence_same_exposure": true/false, "evidence_same_outcome": true/false, "same_direction": true/false, '
+        '"shares_condition": true/false, "shares_exposure": true/false, "shares_outcome": true/false, '
+        '"rationale": "<at most 20 words>"}\n'
+        "q_* = the query's main condition, exposure/intervention and outcome; d_* = what the document studies. "
+        "'evidence' only if the document reports the same finding as the reference answer for the same exposure and "
+        "outcome (copied from the DOCUMENT, not from the reference answer, no '...'); evidence_same_exposure / "
+        "evidence_same_outcome = that sentence is about exactly the query's exposure / outcome (not a related one); "
+        "'same_direction' = it points the same way (yes/no) as the reference answer. "
+        "shares_* = the document is about the query's main condition / exposure / outcome (animal, cell or lab studies "
+        "and other populations still count)."
     )
 
 
@@ -56,47 +73,40 @@ def evidence_in_document(evidence: str, document: str) -> bool:
     return len(quote) >= 20 and quote in _normalize(document)
 
 
-def _pair_block(i: int, pair: Dict[str, Any]) -> str:
-    block = f"### Pair {i}\nQuery: {pair['query']}\n"
+def _user_message(pair: Dict[str, Any]) -> str:
+    message = f"Query: {pair['query']}\n"
     if pair.get("reference_answer"):
-        block += f"Correct answer (reference): {pair['reference_answer']}\n"
-    return block + f"Document: {pair.get('text') or pair.get('document', '')}\n"
+        message += f"Correct answer (reference): {pair['reference_answer']}\n"
+    return message + f"Document: {pair.get('text') or pair.get('document', '')}\n"
 
 
-def _ask(client, model: str, system_prompt: str, batch: List[Dict[str, Any]],
-         last_bad: Optional[Dict[int, Dict[str, Any]]] = None) -> Dict[int, Dict[str, Any]]:
-    """One request; returns {pair index: {label, rationale, evidence, evidence_found}} for the valid entries.
-    A ground_truth label whose evidence is not found in the document is left out (and kept in last_bad)."""
-    last_bad = {} if last_bad is None else last_bad
-    user = "\n".join(_pair_block(i + 1, p) for i, p in enumerate(batch))
+def decide_label(answers: Dict[str, Any], document: str) -> Dict[str, Any]:
+    """Applies the codebook's three steps to the model's answers; a GD needs a quote that is really in the document."""
+    evidence = str(answers.get("evidence") or "").strip()
+    found = evidence_in_document(evidence, document) if evidence else None
+    if found and all(answers.get(k) is True for k in GD_KEYS):
+        label = "ground_truth"
+    elif any(answers.get(k) is True for k in SHARED_KEYS) or found:
+        label = "harmful"  # same topic without the reference finding, or a real quote showing another finding
+    else:
+        label = "mediocre"
+    return {"label": label, "evidence": evidence, "evidence_found": found}
+
+
+def _ask(client, model: str, system_prompt: str, pair: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """One request for one pair; returns the model's answers, or None when the reply is not usable."""
     response = chat_completion(
-        client, model=model, temperature=0.0, max_tokens=80 + 140 * len(batch),
+        client, model=model, temperature=0.0, max_tokens=500,
         response_format={"type": "json_object"},
-        messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user}],
+        messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": _user_message(pair)}],
     )
     try:
-        entries = json.loads(response.choices[0].message.content)["labels"]
-    except (json.JSONDecodeError, TypeError, KeyError):
-        return {}
-    found = {}
-    for position, entry in enumerate(entries):
-        try:
-            index = int(entry.get("pair", position + 1)) - 1
-        except (TypeError, ValueError):
-            continue
-        label = str(entry.get("label", "")).strip().lower()
-        label = ALIASES.get(label, label)
-        if not (0 <= index < len(batch) and label in LABELS and index not in found):
-            continue
-        evidence = str(entry.get("evidence") or "")
-        document = batch[index].get("text") or batch[index].get("document", "")
-        result = {"label": label, "rationale": entry.get("rationale", ""), "evidence": evidence,
-                  "evidence_found": evidence_in_document(evidence, document) if label == "ground_truth" else None}
-        if result["evidence_found"] is False:
-            last_bad[index] = result  # a GD without a real quote from the document is asked again
-            continue
-        found[index] = result
-    return found
+        answers = json.loads(response.choices[0].message.content)
+    except (json.JSONDecodeError, TypeError, AttributeError):
+        return None
+    if not isinstance(answers, dict) or not all(isinstance(answers.get(k), bool) for k in BOOLEAN_KEYS):
+        return None
+    return answers
 
 
 def label_pairs(
@@ -104,37 +114,28 @@ def label_pairs(
     client: Any = None,
     model: Optional[str] = None,
     rubric_path: str = RUBRIC_PATH,
-    batch_size: int = 10,
+    batch_size: int = 1,
     max_retries: int = 2,
 ) -> List[Dict[str, Any]]:
-    """Labels each (query, document) pair GD / MD / HD against the query's reference answer."""
+    """Labels each (query, document) pair GD / MD / HD against the query's reference answer, one pair per request.
+    batch_size is accepted for older callers and ignored (one pair per request labelled best in the pilot)."""
     if client is None:
         client, model = make_labeler_client(model)
     model = model or os.getenv("SAFEMED_LABELER_MODEL") or "gpt-4o-mini"
     system_prompt = _system_prompt(rubric_path)
 
     labelled = []
-    for start in range(0, len(pairs), batch_size):
-        batch = pairs[start:start + batch_size]
-        results: Dict[int, Dict[str, Any]] = {}
-        unquoted: Dict[int, Dict[str, Any]] = {}
-        missing = list(range(len(batch)))
+    for pair in pairs:
+        answers = None
         for _ in range(1 + max_retries):
-            subset = [batch[i] for i in missing]
-            bad: Dict[int, Dict[str, Any]] = {}
-            for sub_index, result in _ask(client, model, system_prompt, subset, bad).items():
-                results[missing[sub_index]] = result
-            unquoted.update({missing[k]: v for k, v in bad.items()})
-            missing = [i for i in range(len(batch)) if i not in results]
-            if not missing:
+            answers = _ask(client, model, system_prompt, pair)
+            if answers is not None:
                 break
-        for i in [i for i in missing if i in unquoted]:
-            results[i] = unquoted[i]  # still GD without a real quote after all tries: kept, flagged for human review
-        missing = [i for i in missing if i not in results]
-        if missing:
-            ids = [batch[i].get("doc_id") for i in missing]
-            raise LabelerUnavailableError(f"labelling model gave no valid label for {ids} after {1 + max_retries} tries")
-        for i, pair in enumerate(batch):
-            labelled.append({**pair, "llm_label": results[i]["label"], "rationale": results[i]["rationale"],
-                             "evidence": results[i]["evidence"], "evidence_found": results[i]["evidence_found"]})
+        if answers is None:
+            raise LabelerUnavailableError(
+                f"labelling model gave no valid answer for {pair.get('doc_id')} after {1 + max_retries} tries")
+        decision = decide_label(answers, pair.get("text") or pair.get("document", ""))
+        labelled.append({**pair, "llm_label": decision["label"], "rationale": str(answers.get("rationale", "")),
+                         "evidence": decision["evidence"], "evidence_found": decision["evidence_found"],
+                         "label_checks": {k: answers.get(k) for k in BOOLEAN_KEYS}})
     return labelled

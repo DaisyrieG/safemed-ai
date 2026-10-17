@@ -63,7 +63,7 @@ class HarmfulDocumentFilter:
         self,
         model_path: Optional[str] = None,
         harmful_threshold: Optional[float] = None,
-        cutoff_k: int = 30,
+        cutoff_k: int = 50,
         scorer: Optional[Scorer] = None,
         batch_size: int = 16,
     ):
@@ -156,7 +156,7 @@ class HarmfulDocumentFilter:
         return classified
 
     def filter(self, query: str, candidates: List[Dict[str, Any]]) -> FilterResult:
-        """Full Stage 2 pass: block, keep the top 30 in retriever order, then apply the Safety Fallback Guard."""
+        """Full Stage 2 pass: block, keep the top 50 in retriever order, then apply the Safety Fallback Guard."""
         from src.stage2_filter.fallback_guard import apply_safety_fallback_guard
 
         classified = self.classify(query, candidates)

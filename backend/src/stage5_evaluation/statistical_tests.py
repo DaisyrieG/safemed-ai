@@ -270,7 +270,7 @@ def mcnemar_midp(control: Sequence[int], treatment: Sequence[int], alpha: float 
         pval = 1.0
     else:
         k = min(b, c)
-        pval = float(min(1.0, 2 * stats.binom.cdf(k, n, 0.5)) - stats.binom.pmf(k, n, 0.5))
+        pval = float(min(1.0, 2 * stats.binom.cdf(k, n, 0.5) - stats.binom.pmf(k, n, 0.5)))  # b = c gives 1
     return {
         "test_type": "McNemar mid-p (paired binary, two-sided)",
         "n": int(len(x1)),

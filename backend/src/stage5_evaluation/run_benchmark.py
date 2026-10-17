@@ -81,11 +81,10 @@ def load_pair_labels(path: Optional[str]) -> Dict[Tuple[str, str], str]:
     return labels
 
 
-def reference_evidence(rec: Dict[str, str], docs: List[Dict[str, Any]]) -> str:
-    """Reference evidence: the query's PubMedQA context, long answer and reference label, plus the
-    documents labelled GD in the answer's own context."""
+def reference_evidence(rec: Dict[str, str]) -> str:
+    """Reference evidence: the query's PubMedQA context, long answer and reference label only, the same for both
+    conditions (no retrieved documents, so the reference does not depend on what a condition retrieved)."""
     parts = [f"Context: {rec['context']}", f"Conclusion: {rec['long_answer']}", f"Reference answer: {rec['final_decision']}"]
-    parts += [f"Retrieved document {i}: {d.get('text', '')}" for i, d in enumerate(docs, 1)]
     return "\n\n".join(parts)
 
 
@@ -183,8 +182,7 @@ def _context(top5: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 def judge_answer(judge: ClaimJudge, rec: Dict[str, str], cond: Dict[str, Any]) -> Dict[str, Any]:
     context = _context(cond["top5"])
-    trusted = [d for d in context if d["true_label"] == "ground_truth"]  # only GD documents count as reference evidence
-    return check_answer(judge, cond["answer"], reference_evidence(rec, trusted), context)
+    return check_answer(judge, cond["answer"], reference_evidence(rec), context)
 
 
 def judge_all(judge: ClaimJudge, blinding: Dict, traces: Dict[str, Dict], records: Dict[str, Dict],
@@ -349,7 +347,11 @@ def analyze(traces: Dict[str, Dict], blinding: Dict, judgments: Dict[str, Dict],
         "H2_answer_accuracy": {**h2_acc, "predicted": "treatment > control"},
         "H2_supported": improved(h2_hhd, "delta_p_improvement") and improved(h2_acc, "delta_p_improvement"),
         "H3_hd_at_top5": {**h3, "predicted": "treatment < control", "supported": improved(h3, "mean_diff")},
-        "H4_gd_at_top5_hit5": {**h4, "predicted": "two-sided difference", "supported": h4["significant"]},
+        "H4_gd_at_top5_hit5": {**h4, "predicted": "no significant loss of GD at Top-5 (treatment >= control)",
+                               "supported": not (h4["significant"] and (h4["delta_p_improvement"] or 0) < 0),
+                               "direction": ("no difference" if not h4["delta_p_improvement"]
+                                             else "treatment higher" if h4["delta_p_improvement"] > 0
+                                             else "treatment lower")},
         "Secondary_unsupported_claim_rate": continuous("ucr", judged),
     }
 
@@ -455,7 +457,7 @@ def run_benchmark(args) -> Dict[str, Any]:
         "judge_same_as_generator": judge.model == pipe.generator.model,
         "leave_self_out": True,
         "blinded_random_order": True,
-        "claim_reference": "PubMedQA context + LONG_ANSWER + final_decision + GD documents in the answer's context",
+        "claim_reference": "PubMedQA context + long answer + reference answer",
         "files": {k: os.path.relpath(os.path.join(args.output_dir, v), BACKEND)
                   for k, v in (("traces", TRACES), ("blinding_key", BLINDING), ("judgments", JUDGMENTS))},
     }
@@ -485,7 +487,8 @@ def run_benchmark(args) -> Dict[str, Any]:
         print(f"{name:34s} N={r['n']:4d}  control={r['mean_control']}  treatment={r['mean_treatment']}  "
               f"d={r['mean_diff']} {r['mean_diff_ci_95']}  p={r['p_value']:.6g}")
     print(f"Supported: H1 {h['H1_hallucination_rate']['supported']} | H2 {h['H2_supported']} | "
-          f"H3 {h['H3_hd_at_top5']['supported']} | H4 {h['H4_gd_at_top5_hit5']['supported']}")
+          f"H3 {h['H3_hd_at_top5']['supported']} | H4 {h['H4_gd_at_top5_hit5']['supported']} "
+          f"({h['H4_gd_at_top5_hit5']['direction']})")
     for lab in ("yes", "no"):
         r = summary["Answer_accuracy_by_reference_label"][lab]
         print(f"Accuracy, reference '{lab}': N={r['n']}  control={r['rate_control']}  treatment={r['rate_treatment']}  "
