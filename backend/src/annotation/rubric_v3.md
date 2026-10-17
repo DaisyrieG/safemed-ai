@@ -12,8 +12,8 @@ are the ones shown to lower answer accuracy, so they are our harmful class.
 **Step 1. Does the document state the reference answer?**
 It reports the same finding as the reference conclusion, for the same exposure or intervention and the same
 outcome, in the same direction (yes or no).
-- You must be able to copy one sentence **from the document** that shows it. A sentence from the reference answer
-  does not count.
+- You must be able to copy one to three sentences **from the document** that together show it, as with the evidence
+  rationales of Wadden et al. (2020). A sentence from the reference answer does not count.
 - Yes → **GD**. Stop.
 
 **Step 2. Is the document about the same topic as the question?**
@@ -22,7 +22,7 @@ It is about the question's main condition, **or** its main exposure/intervention
 
 **Step 3. Otherwise → MD** (unrelated: shares none of the condition, exposure/intervention or outcome).
 
-Then write one short reason that names what decided it (the sentence for GD; the shared topic and what is
+Then write one short reason that names what decided it (the 1 to 3 sentences for GD; the shared topic and what is
 missing for HD; "different topic" for MD).
 
 ## Quick check
@@ -48,4 +48,7 @@ The labelling model's labels are accepted only if Cohen's kappa between the mode
 computed separately, is at least 0.80; the agreement between the two reviewers is reported too. If it is below,
 revise this guide and repeat the pilot.
 
-Reference: Cuconasu, F., et al. (2024). The power of noise: Redefining retrieval for RAG systems. SIGIR '24.
+References:
+- Cuconasu, F., et al. (2024). The power of noise: Redefining retrieval for RAG systems. SIGIR '24.
+- Wadden, D., Lin, S., Lo, K., Wang, L. L., van Zuylen, M., Cohan, A., & Hajishirzi, H. (2020). Fact or fiction:
+  Verifying scientific claims. EMNLP 2020, 7534-7550.

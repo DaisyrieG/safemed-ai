@@ -1,9 +1,9 @@
 """LLM labels (GD / MD / HD) for (query, document) pairs.
 
 The model answers the codebook's questions for one pair at a time (what the query and the document are about, which
-of condition / exposure / outcome they share, and a quote for GD); the code then applies the codebook's steps in
-order, so the label always follows the codebook's rules:
-  Step 1  a quote found in the document, on the same exposure and outcome, in the same direction  -> GD
+of condition / exposure / outcome they share, and 1 to 3 quoted sentences for GD); the code then applies the codebook's
+steps in order, so the label always follows the codebook's rules:
+  Step 1  1 to 3 sentences all found in the document, on the same exposure and outcome, same direction  -> GD
   Step 2  otherwise, any shared condition, exposure or outcome (or a quote showing another finding) -> HD
   Step 3  otherwise                                                                                 -> MD
 """
@@ -11,7 +11,7 @@ order, so the label always follows the codebook's rules:
 import json
 import os
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence, Union
 
 from dotenv import load_dotenv
 
@@ -49,15 +49,17 @@ def _system_prompt(rubric_path: str) -> str:
         "Answer the codebook's questions for the (query, document) pair. Reply in JSON only:\n"
         '{"q_condition": "...", "q_exposure": "...", "q_outcome": "...", '
         '"d_condition": "...", "d_exposure": "...", "d_outcome": "...", '
-        '"evidence": "<one full sentence copied exactly from the DOCUMENT that reports the reference finding, or empty>", '
+        '"evidence": ["<1 to 3 full sentences copied exactly from the DOCUMENT that together report the reference '
+        'finding>"] or [], '
         '"evidence_same_exposure": true/false, "evidence_same_outcome": true/false, "same_direction": true/false, '
         '"shares_condition": true/false, "shares_exposure": true/false, "shares_outcome": true/false, '
         '"rationale": "<at most 20 words>"}\n'
         "q_* = the query's main condition, exposure/intervention and outcome; d_* = what the document studies. "
         "'evidence' only if the document reports the same finding as the reference answer for the same exposure and "
-        "outcome (copied from the DOCUMENT, not from the reference answer, no '...'); evidence_same_exposure / "
-        "evidence_same_outcome = that sentence is about exactly the query's exposure / outcome (not a related one); "
-        "'same_direction' = it points the same way (yes/no) as the reference answer. "
+        "outcome: a list of 1 to 3 sentences, each copied exactly from the DOCUMENT (not from the reference answer, "
+        "no '...'); evidence_same_exposure / evidence_same_outcome = those sentences are about exactly the query's "
+        "exposure / outcome (not a related one); 'same_direction' = they point the same way (yes/no) as the reference "
+        "answer. "
         "shares_* = the document is about the query's main condition / exposure / outcome (animal, cell or lab studies "
         "and other populations still count)."
     )
@@ -67,10 +69,12 @@ def _normalize(text: str) -> str:
     return re.sub(r"\s+", " ", str(text)).strip().strip('"\'').rstrip(".").lower()
 
 
-def evidence_in_document(evidence: str, document: str) -> bool:
-    """True when the quoted sentence really appears in the document (ignoring spacing, case and a final period)."""
-    quote = _normalize(evidence)
-    return len(quote) >= 20 and quote in _normalize(document)
+def evidence_in_document(evidence: Union[str, Sequence[str]], document: str) -> bool:
+    """True when 1 to 3 quoted sentences are given and every one really appears in the document (ignoring spacing,
+    case and a final period); a single sentence may be passed as a string."""
+    quotes = [_normalize(evidence)] if isinstance(evidence, str) else [_normalize(s) for s in evidence]
+    text = _normalize(document)
+    return 1 <= len(quotes) <= 3 and all(len(q) >= 20 and q in text for q in quotes)
 
 
 def _user_message(pair: Dict[str, Any]) -> str:
@@ -82,8 +86,11 @@ def _user_message(pair: Dict[str, Any]) -> str:
 
 def decide_label(answers: Dict[str, Any], document: str) -> Dict[str, Any]:
     """Applies the codebook's three steps to the model's answers; a GD needs a quote that is really in the document."""
-    evidence = str(answers.get("evidence") or "").strip()
-    found = evidence_in_document(evidence, document) if evidence else None
+    raw = answers.get("evidence")
+    sentences = [s for s in ([raw] if isinstance(raw, str) else list(raw or [])) if str(s).strip()]  # list or one
+    sentences = [str(s).strip() for s in sentences]
+    evidence = " ".join(sentences)
+    found = evidence_in_document(sentences, document) if sentences else None
     if found and all(answers.get(k) is True for k in GD_KEYS):
         label = "ground_truth"
     elif any(answers.get(k) is True for k in SHARED_KEYS) or found:

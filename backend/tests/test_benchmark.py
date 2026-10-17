@@ -142,3 +142,28 @@ def test_newcombe_ci_matches_fagerland_2014_example():
     after = [1] * 1 + [0] * 1 + [1] * 7 + [0] * 12
     lo, hi = newcombe_paired_ci(after, before)
     assert round(lo, 3) == 0.026 and round(hi, 3) == 0.507
+
+
+def test_test_split_is_all_pqal_with_the_official_500_marked():
+    from collections import Counter
+    records, _ = rb.load_test_queries("test", None)
+    assert len(records) == 1000
+    assert Counter(r["final_decision"] for r in records) == {"yes": 552, "no": 338, "maybe": 110}
+    official = [r for r in records if r["official_test"]]
+    assert len(official) == 500
+    assert Counter(r["final_decision"] for r in official) == {"yes": 276, "no": 169, "maybe": 55}
+
+
+def test_analysis_reports_the_official_test_set_separately(tmp_path):
+    traces = {p: _trace(p) for p in ("1", "2", "3")}
+    records = _records(traces)
+    records["1"]["official_test"] = records["2"]["official_test"] = True
+    blinding = rb.blind(list(traces.values()), str(tmp_path), seed=1)
+    judge, _ = fake_judge()
+    judged = rb.judge_all(judge, blinding, traces, records, str(tmp_path), pace=0)
+    args = types.SimpleNamespace(seed=42, n_bootstrap=50, n_permutations=200)
+    summary = rb.analyze(traces, blinding, judged, records, args, {})
+    assert summary["num_queries"] == 3 and summary["num_official_test_queries"] == 2
+    official = summary["Hypotheses_official_test_set"]
+    assert official["H1_hallucination_rate"]["n"] == 2 and official["H3_hd_at_top5"]["n"] == 2
+    assert summary["Hypotheses"]["H1_hallucination_rate"]["n"] == 3

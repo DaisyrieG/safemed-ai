@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 
 from src.pipeline import PQAA_CORPUS, SafeMedPipeline
-from src.stage1_retriever.build_corpus import SPLITS_PATH, load_pqaa
+from src.stage1_retriever.build_corpus import SPLITS_PATH, load_pqaa, load_pqal
 from src.stage4_generator.llm_client import chat_completion
 from src.stage5_evaluation.judge import ClaimJudge
 from src.stage5_evaluation.live_check import check_answer, extract_decision
@@ -52,12 +52,17 @@ def append_jsonl(path: str, row: Dict[str, Any]) -> None:
 
 
 def load_test_queries(split: str, n: Optional[int]) -> Tuple[List[Dict[str, str]], str]:
-    """The test (or val) queries of the fixed seed-42 partition, with their reference evidence."""
-    if not os.path.isfile(SPLITS_PATH):
-        raise BenchmarkAbort(f"{SPLITS_PATH} not found. Run `python -m src.stage1_retriever.build_corpus` first.")
-    with open(SPLITS_PATH, "r", encoding="utf-8") as f:
-        pubids = json.load(f)[split]
-    pqaa, source = load_pqaa()
+    """The queries with their reference evidence: test = all 1,000 PQA-L questions (official_test marks the 500 of
+    the official test set), val = the validation queries of the fixed seed-42 pqa_artificial partition."""
+    if split == "test":
+        pqaa, source = load_pqal()
+        pubids = list(pqaa)
+    else:
+        if not os.path.isfile(SPLITS_PATH):
+            raise BenchmarkAbort(f"{SPLITS_PATH} not found. Run `python -m src.stage1_retriever.build_corpus` first.")
+        with open(SPLITS_PATH, "r", encoding="utf-8") as f:
+            pubids = json.load(f)[split]
+        pqaa, source = load_pqaa()
     records = []
     for pubid in pubids[: n or len(pubids)]:
         item = pqaa[pubid]
@@ -67,6 +72,7 @@ def load_test_queries(split: str, n: Optional[int]) -> Tuple[List[Dict[str, str]
             "context": " ".join(item.get("CONTEXTS") or []),
             "long_answer": item["LONG_ANSWER"].strip(),
             "final_decision": str(item.get("final_decision", "")).lower(),
+            "official_test": bool(item.get("official_test", False)),
         })
     return records, f"{source} [{split} split, {len(records)} queries]"
 
@@ -335,25 +341,36 @@ def analyze(traces: Dict[str, Dict], blinding: Dict, judgments: Dict[str, Dict],
                 "mean_diff_ci_95": boot_ci(np.subtract(c, t))}
 
     improved = lambda r, k: bool(r["significant"] and (r[k] or 0) > 0)
-    h1 = binary("hallucinated", judged, lower_is_better=True)
-    h2_hhd = binary("hd_induced", judged, lower_is_better=True)
-    h2_acc = binary("correct", judged, lower_is_better=False)
-    h3 = continuous("hd_at5", per_query)
-    h4 = binary("hit_at5", per_query, lower_is_better=False)
-    hypotheses = {
-        "H1_hallucination_rate": {**h1, "role": "confirmatory", "predicted": "treatment < control",
-                                  "supported": improved(h1, "delta_p_improvement")},
-        "H2_hd_induced_hallucination_rate": {**h2_hhd, "predicted": "treatment < control"},
-        "H2_answer_accuracy": {**h2_acc, "predicted": "treatment > control"},
-        "H2_supported": improved(h2_hhd, "delta_p_improvement") and improved(h2_acc, "delta_p_improvement"),
-        "H3_hd_at_top5": {**h3, "predicted": "treatment < control", "supported": improved(h3, "mean_diff")},
-        "H4_gd_at_top5_hit5": {**h4, "predicted": "no significant loss of GD at Top-5 (treatment >= control)",
-                               "supported": not (h4["significant"] and (h4["delta_p_improvement"] or 0) < 0),
-                               "direction": ("no difference" if not h4["delta_p_improvement"]
-                                             else "treatment higher" if h4["delta_p_improvement"] > 0
-                                             else "treatment lower")},
-        "Secondary_unsupported_claim_rate": continuous("ucr", judged),
-    }
+
+    def test_hypotheses(rows: List[Dict], rows_judged: List[Dict]) -> Dict[str, Any]:
+        """H1-H4 on a set of queries (rows) and those of them judged in both conditions (rows_judged)."""
+        h1 = binary("hallucinated", rows_judged, lower_is_better=True)
+        h2_hhd = binary("hd_induced", rows_judged, lower_is_better=True)
+        h2_acc = binary("correct", rows_judged, lower_is_better=False)
+        h3 = continuous("hd_at5", rows)
+        h4 = binary("hit_at5", rows, lower_is_better=False)
+        return {
+            "H1_hallucination_rate": {**h1, "role": "confirmatory", "predicted": "treatment < control",
+                                      "supported": improved(h1, "delta_p_improvement")},
+            "H2_hd_induced_hallucination_rate": {**h2_hhd, "predicted": "treatment < control"},
+            "H2_answer_accuracy": {**h2_acc, "predicted": "treatment > control"},
+            "H2_supported": improved(h2_hhd, "delta_p_improvement") and improved(h2_acc, "delta_p_improvement"),
+            "H3_hd_at_top5": {**h3, "predicted": "treatment < control", "supported": improved(h3, "mean_diff")},
+            "H4_gd_at_top5_hit5": {**h4, "predicted": "no significant loss of GD at Top-5 (treatment >= control)",
+                                   "supported": not (h4["significant"] and (h4["delta_p_improvement"] or 0) < 0),
+                                   "direction": ("no difference" if not h4["delta_p_improvement"]
+                                                 else "treatment higher" if h4["delta_p_improvement"] > 0
+                                                 else "treatment lower")},
+            "Secondary_unsupported_claim_rate": continuous("ucr", rows_judged),
+        }
+
+    hypotheses = test_hypotheses(per_query, judged)
+    h2_acc = hypotheses["H2_answer_accuracy"]
+    # the official PQA-L test set (500 questions) is reported separately when the run includes it
+    is_official = lambda r: bool(records[r["pubid"]].get("official_test"))
+    official = [r for r in per_query if is_official(r)]
+    hypotheses_official = (test_hypotheses(official, [r for r in judged if is_official(r)])
+                           if official and len(official) < len(per_query) else None)
 
     accuracy_by_label = {}
     for lab in ("yes", "no"):
@@ -407,6 +424,8 @@ def analyze(traces: Dict[str, Dict], blinding: Dict, judgments: Dict[str, Dict],
         "n_judged_both_conditions": len(judged),
         "SOP1_filter_detection": sop1,
         "Hypotheses": hypotheses,
+        "num_official_test_queries": len(official),
+        "Hypotheses_official_test_set": hypotheses_official,
         "Answer_accuracy_by_reference_label": accuracy_by_label,
         "Maybe_answers": maybe_answers,
         "Supplementary_stage2_means": supplementary_stage2,
@@ -489,6 +508,11 @@ def run_benchmark(args) -> Dict[str, Any]:
     print(f"Supported: H1 {h['H1_hallucination_rate']['supported']} | H2 {h['H2_supported']} | "
           f"H3 {h['H3_hd_at_top5']['supported']} | H4 {h['H4_gd_at_top5_hit5']['supported']} "
           f"({h['H4_gd_at_top5_hit5']['direction']})")
+    ho = summary.get("Hypotheses_official_test_set")
+    if ho:
+        print(f"Official PQA-L test set ({summary['num_official_test_queries']} queries): "
+              f"H1 {ho['H1_hallucination_rate']['supported']} (p={ho['H1_hallucination_rate']['p_value']:.6g}) | "
+              f"H2 {ho['H2_supported']} | H3 {ho['H3_hd_at_top5']['supported']} | H4 {ho['H4_gd_at_top5_hit5']['supported']}")
     for lab in ("yes", "no"):
         r = summary["Answer_accuracy_by_reference_label"][lab]
         print(f"Accuracy, reference '{lab}': N={r['n']}  control={r['rate_control']}  treatment={r['rate_treatment']}  "

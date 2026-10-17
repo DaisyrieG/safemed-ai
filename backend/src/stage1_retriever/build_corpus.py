@@ -41,6 +41,19 @@ def load_pqaa() -> Tuple[Dict[str, Dict[str, Any]], str]:
     return data, "huggingface:qiaojin/PubMedQA/pqa_artificial"
 
 
+def load_pqal() -> Tuple[Dict[str, Dict[str, Any]], str]:
+    """All 1,000 expert-labelled PubMedQA PQA-L questions (Jin et al., 2019) in the ori_pqaa.json format, each with
+    official_test = True for the 500 of the official test set (test_ground_truth.json), and where they came from.
+    Their articles are not in pqa_artificial, so never in the retrieval corpus."""
+    data_dir = os.path.join(ROOT, "third_party", "pubmedqa", "data")
+    pqal_path = os.path.join(data_dir, "ori_pqal.json")
+    with open(pqal_path, "r", encoding="utf-8") as f:
+        pqal = json.load(f)
+    with open(os.path.join(data_dir, "test_ground_truth.json"), "r", encoding="utf-8") as f:
+        official = set(json.load(f))
+    return {pid: {**item, "official_test": pid in official} for pid, item in pqal.items()}, f"{pqal_path} [PQA-L]"
+
+
 def build_corpus(pqaa: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
     corpus = []
     for pubid, item in pqaa.items():

@@ -19,7 +19,7 @@ from src.stage4_generator.llm_client import make_client  # noqa: E402
 
 load_dotenv(os.path.join(BACKEND, ".env"))
 from src.pipeline import PQAA_CORPUS  # noqa: E402
-from src.stage1_retriever.build_corpus import SPLITS_PATH, load_pqaa  # noqa: E402
+from src.stage1_retriever.build_corpus import SPLITS_PATH, load_pqaa, load_pqal  # noqa: E402
 from src.stage1_retriever.retriever import BiEncoderRetriever, index_path_for  # noqa: E402
 
 OUTPUT = os.path.join(BACKEND, "data", "annotations", "pqaa_llm_labels_v3.jsonl")
@@ -111,8 +111,10 @@ def main():
 
     with open(SPLITS_PATH, "r", encoding="utf-8") as f:
         splits = json.load(f)
-    full, _ = load_pqaa()
-    test_ids = splits["test"][: args.test_queries] if args.test_queries else []
+    full, _ = load_pqal() if args.test_queries else load_pqaa()  # test = the 1,000 PQA-L questions
+    test_ids = list(full)[: args.test_queries] if args.test_queries else []
+    if test_ids and args.output == OUTPUT:  # test labels never go into the training labels file
+        args.output = OUTPUT.replace("pqaa_llm_labels", "pqal_test_labels")
     needed = set(test_ids) if test_ids else set(splits["train"]) | set(splits["val"])
     pqaa = {k: {f: full[k].get(f) for f in ("QUESTION", "LONG_ANSWER", "final_decision")} for k in needed}
     del full

@@ -57,6 +57,21 @@ def test_gd_needs_a_real_quote_on_the_same_exposure_outcome_and_direction():
     assert opposite[0]["llm_label"] == "harmful"
 
 
+def test_gd_evidence_may_be_one_to_three_sentences_all_in_the_document():
+    text = ("Patients took aspirin daily for ten years. Pain scores fell by half in the aspirin group. "
+            "Side effects were rare and mild overall. No other drug was studied here at all.")
+    pair = [{"query": "Does aspirin reduce pain?", "reference_answer": "yes", "text": text}]
+    two = ["Patients took aspirin daily for ten years.", "Pain scores fell by half in the aspirin group."]
+    out = label_pairs(pair, client=fake_llm_client(reply=_answers(two, same=(True, True, True))))
+    assert out[0]["llm_label"] == "ground_truth" and out[0]["evidence_found"] is True
+    one_missing = two[:1] + ["Pain vanished completely in every single patient."]
+    out = label_pairs(pair, client=fake_llm_client(reply=_answers(one_missing, same=(True, True, True))))
+    assert out[0]["llm_label"] != "ground_truth" and out[0]["evidence_found"] is False
+    four = two + ["Side effects were rare and mild overall.", "No other drug was studied here at all."]
+    out = label_pairs(pair, client=fake_llm_client(reply=_answers(four, same=(True, True, True))))
+    assert out[0]["llm_label"] != "ground_truth"  # more than three sentences is not allowed
+
+
 def test_a_gd_quote_that_is_not_in_the_document_is_not_gd():
     pairs = [{"query": "Is hs-CRP irrelevant?", "reference_answer": "yes",
               "text": "Uterine biopsies and progesterone in healthy women."}]
