@@ -48,3 +48,4 @@ backend/data/cache/
 backend/models/
 backend/reviewer_sheet/answer_key.csv
 backend/label_check/answer_key.csv
+backend/data/annotations/pqaa_llm_labels_v3*.jsonl
