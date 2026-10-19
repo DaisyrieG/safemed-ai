@@ -46,3 +46,5 @@ backend/data/cache/
 
 # Trained filter weights (train_filter.py output; never commit model weights)
 backend/models/
+backend/reviewer_sheet/answer_key.csv
+backend/label_check/answer_key.csv
