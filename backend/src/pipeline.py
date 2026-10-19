@@ -16,7 +16,6 @@ TOP_K = 5
 _BACKEND = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 _DATA_DIR = os.path.join(_BACKEND, "data")
 DEMO_CORPUS = os.path.join(_DATA_DIR, "demo", "pubmedqa_demo_corpus.json")
-DEMO_HARMFUL = os.path.join(_DATA_DIR, "demo", "pubmedqa_demo_harmful.json")
 PQAA_CORPUS = os.path.join(_DATA_DIR, "processed", "pqaa_corpus.json")
 DEFAULT_FILTER_MODEL = os.path.join(_BACKEND, "models", "safemed_filter")
 
@@ -36,12 +35,6 @@ def resolve_filter_model_path() -> str:
     return os.path.abspath(os.getenv("SAFEMED_FILTER_MODEL", "").strip() or DEFAULT_FILTER_MODEL)
 
 
-def load_extra_documents(corpus_path: str) -> List[Dict[str, Any]]:
-    """The labelled synthetic harmful documents (scripts/generate_harmful_docs.py) join the demo corpus."""
-    if corpus_path != DEMO_CORPUS or not os.path.exists(DEMO_HARMFUL):
-        return []
-    with open(DEMO_HARMFUL, "r", encoding="utf-8") as f:
-        return json.load(f)
 
 
 def _normalise(text: str) -> str:
@@ -96,10 +89,6 @@ class SafeMedPipeline:
             corpus_path = corpus_path or resolve_corpus_path(os.getenv("SAFEMED_CORPUS", "demo"))
             print(f"[Pipeline] Corpus: {corpus_path}")
             retriever = BiEncoderRetriever(top_k=50, corpus_path=corpus_path)
-            extra = load_extra_documents(corpus_path)
-            if extra:
-                retriever.build_index(list(retriever.corpus) + extra)
-                print(f"[Pipeline] Added {len(extra)} labelled harmful documents from {DEMO_HARMFUL}")
         self.retriever = retriever
 
         if use_filter and harm_filter is None:
